@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block title %}方案与学年{% endblock %}
+{% block content %}
+<section class="page-heading"><div><div class="eyebrow">MULTI-SCHEME WORKSPACE</div><h1>方案与学年</h1><p>一位部门管理员可负责多套评价方案；切换方案后，字典、录入、审核、排名和归档会同步切换。</p></div></section>
+
+<section class="scheme-card-grid">
+  {% for item in schemes %}
+  <article class="scheme-card {% if scheme and item.id == scheme.id %}active{% endif %}">
+    <div><span class="status-badge status-{{ 'approved' if item.status == 'active' else 'draft' }}">{{ '使用中' if item.status == 'active' else '已归档' }}</span><small>{{ item.code }}</small></div>
+    <h3>{{ item.name }}</h3><p>{{ item.description or '暂无方案说明' }}</p>
+    <div class="button-row">
+      <form method="post" action="{{ url_for('main.select_scheme', scheme_id=item.id) }}"><button class="secondary-button" type="submit">{{ '当前方案' if scheme and item.id == scheme.id else '选择查看' }}</button></form>
+      {% if item.status == 'active' %}<form method="post" action="{{ url_for('main.archive_scheme', scheme_id=item.id) }}"><button class="danger-button" type="submit">归档方案</button></form>{% else %}<form method="post" action="{{ url_for('main.restore_scheme', scheme_id=item.id) }}"><button class="secondary-button" type="submit">恢复方案</button></form>{% endif %}
+    </div>
+  </article>
+  {% endfor %}
+</section>
+
+<section class="settings-grid">
+  <section class="panel"><div class="eyebrow">ACTIVE SCHEME</div><h2>当前考评方案</h2>{% if scheme %}<form method="post" class="stack-form"><input type="hidden" name="action" value="save"><label>方案编号<input name="code" value="{{ scheme.code }}" required></label><label>方案名称<input name="name" value="{{ scheme.name }}" required></label><label>方案说明<textarea name="description" rows="3">{{ scheme.description }}</textarea></label><button class="primary-button" type="submit">保存方案信息</button></form>{% else %}<div class="empty-state"><p>还没有可管理的方案，请先新增。</p></div>{% endif %}</section>
+  <section class="panel"><div class="eyebrow">NEW SCHEME</div><h2>新增评价方案</h2><form method="post" class="stack-form"><input type="hidden" name="action" value="create"><label>方案编号<input name="code" placeholder="例：YWXX-TEACHER-2027" required></label><label>方案名称<input name="name" placeholder="例：教师年度考评方案" required></label><label>首个学年<input name="academic_year" placeholder="2027—2028学年" required></label><label>方案说明<textarea name="description" rows="2"></textarea></label><button class="primary-button" type="submit">创建并切换</button></form></section>
+</section>
+
+{% if scheme %}
+<section class="settings-grid">
+  <section class="panel"><div class="eyebrow">NEW YEAR</div><h2>开启新学年</h2><p class="lead">必须先归档当前学年。可继承历史字典，但分数和记录从零开始。</p><form method="post" action="{{ url_for('main.create_academic_year') }}" class="stack-form"><label>新学年名称<input name="name" placeholder="2027—2028学年" required></label><label>继承字典<select name="source_year_id"><option value="">不继承</option>{% for year in years %}<option value="{{ year.id }}">{{ year.label }}</option>{% endfor %}</select></label><button class="secondary-button" type="submit">开启新学年</button></form></section>
+  <section class="panel year-panel"><div class="panel-heading"><div><div class="eyebrow">HISTORY</div><h2>学年与归档</h2></div></div><div class="year-list">{% for year in years %}<article><div><strong>{{ year.label }}</strong><small>{{ '当前可编辑' if year.status == 'active' else '已归档只读' }}</small></div><span class="status-badge status-{{ 'approved' if year.status == 'active' else 'draft' }}">{{ year.status }}</span>{% if year.status == 'active' %}<form method="post" action="{{ url_for('main.archive_year', year_id=year.id) }}"><button class="danger-button" type="submit">归档</button></form>{% else %}<form method="post" action="{{ url_for('main.restore_year', year_id=year.id) }}"><button class="secondary-button" type="submit">还原后修改</button></form>{% endif %}</article>{% else %}<div class="empty-state"><p>该方案还没有学年。</p></div>{% endfor %}</div></section>
+</section>
+{% endif %}
+{% endblock %}

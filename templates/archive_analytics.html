@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block title %}档案跟踪{% endblock %}
+{% block content %}
+<section class="page-heading"><div><div class="eyebrow">LONGITUDINAL ARCHIVE</div><h1>档案跟踪</h1><p>跨方案、跨学年读取当前账号有权限的在用与已归档数据，观察教师或班级的长期趋势并查看明细。</p></div></section>
+<section class="panel analytics-filter">
+  <label>跟踪对象<select id="analytics-type"><option value="teacher">教师</option><option value="class">班级</option></select></label>
+  <label id="teacher-filter">选择教师<select id="analytics-teacher">{% for teacher in teachers %}<option value="{{ teacher.id }}">{{ teacher.display_name }}</option>{% endfor %}</select></label>
+  <label id="class-filter" class="is-disabled">选择班级<select id="analytics-class" disabled>{% for value in tracking_values %}<option value="{{ value }}">{{ value }}</option>{% endfor %}</select></label>
+  <label>开始日期<input id="analytics-start" type="date"></label>
+  <label>结束日期<input id="analytics-end" type="date"></label>
+  <button class="primary-button" id="analytics-load" type="button">生成档案视图</button>
+  <div class="analytics-load-status" id="analytics-load-status" role="status" aria-live="polite">统计范围：{{ schemes|length }} 套可访问方案的全部学年。页面会先自动生成一次。</div>
+</section>
+<section class="analytics-summary" id="analytics-summary"></section>
+<section class="analytics-grid">
+  <article class="panel chart-panel"><div class="eyebrow">TREND</div><h2>月度得分趋势</h2><div id="trend-chart" class="trend-chart"></div></article>
+  <article class="panel chart-panel"><div class="eyebrow">COMPARISON</div><h2>同期对象对比</h2><div id="compare-chart" class="bar-chart"></div></article>
+</section>
+<section class="panel chart-panel"><div class="eyebrow">CATEGORY MIX</div><h2>指标分类构成</h2><div id="category-chart" class="bar-chart horizontal"></div></section>
+<section class="panel archive-detail-panel"><div class="eyebrow">RECORD DETAILS</div><h2>评价明细</h2><p class="lead">点击任意记录，在浮窗中查看所属方案、学年、完整字段、说明和材料。</p><div id="archive-detail-list" class="archive-detail-list"></div></section>
+<div class="archive-modal" id="archive-detail-modal" hidden role="dialog" aria-modal="true" aria-label="评价记录详情">
+  <article class="archive-modal-card"><button class="archive-modal-close" id="archive-modal-close" type="button" aria-label="关闭">×</button><div id="archive-modal-content"></div></article>
+</div>
+{% endblock %}
+{% block scripts %}<script src="{{ url_for('static', filename='js/archive-analytics.js', v='20260714-cross-scheme1') }}"></script>{% endblock %}

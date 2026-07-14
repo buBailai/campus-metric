@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block title %}在线更新{% endblock %}
+{% block content %}
+<section class="page-heading"><div><div class="eyebrow">ONLINE UPDATE</div><h1>在线更新</h1><p>检查 version.json，下载后校验 SHA256，只覆盖程序文件，不碰数据库、附件、API Key 和备份。</p></div></section>
+<section class="settings-grid"><section class="panel"><div class="eyebrow">UPDATE SOURCE</div><h2>更新源</h2><form method="post" class="stack-form"><label>更新源根地址<input name="update_base_url" value="{{ update_base_url }}" placeholder="https://example.com/campus-eval-update"><small>该目录下应包含 version.json 和对应 zip 包。开源仓库不写死私有地址。</small></label><button class="secondary-button" type="submit">保存更新源</button></form></section>
+<section class="panel"><div class="eyebrow">VERSION STATUS</div><h2>当前版本 {{ update_status.version }}</h2><div class="update-state"><span>运行模式</span><strong>{{ '免安装托管模式' if update_status.managed else '源码开发模式' }}</strong></div><div class="update-state"><span>已暂存更新</span><strong>{{ '是' if update_status.pending else '否' }}</strong></div><div class="button-row update-actions"><button class="primary-button" id="check-update" type="button">检查更新</button><button class="secondary-button" id="download-update" type="button" disabled>下载并校验</button><button class="danger-button" id="apply-update" type="button" {% if not update_status.pending %}disabled{% endif %}>应用更新</button></div><div id="update-result" class="validation-result" hidden></div></section></section>
+<section class="panel security-note"><strong>发布说明</strong><p>项目已附带 <code>scripts/build_update_package.py</code> 和 <code>release/version.example.json</code>，可生成纯代码更新包和清单。源码模式只允许下载暂存，避免运行中覆盖开发目录。</p></section>
+{% endblock %}
+{% block scripts %}<script>
+const result=document.getElementById('update-result'),download=document.getElementById('download-update'),apply=document.getElementById('apply-update');
+const updateEndpoints={check:{{ url_for('main.check_update_api')|tojson }},download:{{ url_for('main.download_update_api')|tojson }},apply:{{ url_for('main.apply_update_api')|tojson }}};
+async function call(url){
+  result.hidden=false;result.className='validation-result';result.textContent='处理中…';
+  try{
+    const r=await fetch(url,{method:'POST'}),contentType=r.headers.get('content-type')||'';
+    if(!contentType.includes('application/json'))throw new Error(`服务器返回了 HTTP ${r.status}`);
+    const d=await r.json();
+    result.className='validation-result '+(d.ok?'valid':'invalid');
+    result.textContent=d.message||(`${d.current} → ${d.latest}`)+(d.notes?'\n'+d.notes:'');
+    return d;
+  }catch(error){
+    result.className='validation-result invalid';
+    result.textContent=`请求失败：${error.message||'请检查网络和更新源后重试'}`;
+    return {ok:false};
+  }
+}
+document.getElementById('check-update').onclick=async()=>{const d=await call(updateEndpoints.check);download.disabled=!d.ok||!d.newer;if(d.ok&&!d.newer)result.textContent=`当前 ${d.current}，更新源 ${d.latest}，已是最新版。`;};
+download.onclick=async()=>{const d=await call(updateEndpoints.download);if(d.ok)apply.disabled=false;};apply.onclick=()=>call(updateEndpoints.apply);
+</script>{% endblock %}

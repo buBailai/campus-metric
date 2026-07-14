@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% block title %}初始化系统{% endblock %}
+{% block content %}
+<section class="auth-card">
+  <div class="eyebrow">FIRST RUN</div>
+  <h1>初始化 CampusMetric</h1>
+  <p class="lead">创建首个管理员账号和当前学年。数据只保存在本机 SQLite 数据库中。</p>
+  <form method="post" class="stack-form">
+    <label>管理员账号<input name="username" autocomplete="username" required placeholder="admin"></label>
+    <label>管理员姓名<input name="display_name" required placeholder="系统管理员"></label>
+    <label>管理员密码<input type="password" name="password" autocomplete="new-password" minlength="8" required placeholder="至少8个字符"></label>
+    <label>当前学年<input name="academic_year" required placeholder="2026—2027学年"></label>
+    <button class="primary-button" type="submit">完成初始化</button>
+  </form>
+</section>
+{% endblock %}

@@ -1,0 +1,21 @@
+.venv/
+.env
+instance/
+uploads/
+backups/
+dist/
+build/
+__pycache__/
+*.pyc
+.DS_Store
+.pytest_cache/
+
+# Local/private project material
+测试账号说明.md
+项目记忆.md
+开发进度.md
+班主任考评方案指标与计分规则梳理.md
+厦门市演武小学2024年班主任考评方案.docx
+examples/演武小学班主任评价字典.json
+docs/公网测试部署.md
+scripts/seed_demo_data.py

@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% block title %}{{ title }}{% endblock %}
+{% block content %}
+<section class="page-heading">
+  <div><div class="eyebrow">{{ eyebrow }}</div><h1>{{ title }}</h1><p>当前用于确认桌面端和手机端的界面风格。</p></div>
+</section>
+<section class="panel preview-hero">
+  <div class="preview-copy">
+    <div class="eyebrow">RESPONSIVE MODULE</div>
+    <h2>{{ description }}</h2>
+    <ul class="preview-list">{% for item in bullets %}<li>{{ item }}</li>{% endfor %}</ul>
+    <p class="lead">本轮只完成 UI 与响应式结构，业务数据将在你确认风格后继续接入。</p>
+  </div>
+  <div class="preview-visual {{ tone }}">
+    <div class="phone-mock">
+      <div class="phone-screen">
+        <div class="phone-pill"></div>
+        <div class="phone-card purple"></div>
+        <div class="phone-card"></div>
+        <div class="phone-card green"></div>
+        <div class="phone-card"></div>
+      </div>
+    </div>
+  </div>
+</section>
+{% endblock %}

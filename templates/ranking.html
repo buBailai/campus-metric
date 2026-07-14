@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+{% block title %}总分排名{% endblock %}
+{% block content %}
+<section class="page-heading"><div><div class="eyebrow">RANKING · {{ year.name if year else '' }}</div><h1>总分排名</h1><p>仅管理端查看和导出，教师端不显示排名。</p></div><div class="button-row"><a class="secondary-button" href="{{ url_for('main.external_import_template') }}">外部导入模板</a><a class="primary-button" href="{{ url_for('main.export_results_excel', year_id=year.id) }}">导出 Excel</a></div></section>
+<section class="ranking-layout">
+  <section class="panel">
+    <div class="responsive-table"><table><thead><tr><th>排名</th><th>教师</th><th>身份标记</th><th>有效记录</th><th>总分</th></tr></thead><tbody>
+      {% for row in rows %}<tr><td data-label="排名"><strong class="rank-number">{{ row.rank }}</strong></td><td data-label="教师"><strong>{{ row.teacher.display_name }}</strong><small>@{{ row.teacher.username }}</small></td><td data-label="身份标记">{{ '班主任 ' if row.teacher.is_homeroom_teacher else '' }}{{ '年段长' if row.teacher.is_grade_leader else '' }}</td><td data-label="有效记录">{{ row.records }}</td><td data-label="总分"><strong>{{ row.score|score }}</strong></td></tr>{% endfor %}
+    </tbody></table></div>
+  </section>
+  <aside class="panel import-panel"><div class="eyebrow">EXTERNAL DATA</div><h2>导入满意率等结果</h2><p class="lead">字典中数据来源为“外部导入”的指标，可按账号和指标编码批量写入。</p><form method="post" action="{{ url_for('main.external_import') }}" enctype="multipart/form-data" class="stack-form"><label class="file-drop"><input type="file" name="file" accept=".xlsx" required><span class="file-icon">↑</span><strong>选择 Excel</strong></label><button class="primary-button" type="submit">导入外部结果</button></form></aside>
+</section>
+{% endblock %}

@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% block title %}移动访问{% endblock %}
+{% block content %}
+<section class="page-heading">
+  <div>
+    <div class="eyebrow">MOBILE ACCESS CENTER</div>
+    <h1>移动访问</h1>
+    <p>为常用模块生成二维码，老师扫码登录后可直接进入对应页面。</p>
+  </div>
+</section>
+
+<section class="qr-toolbar">
+  <label>手机可访问的系统地址
+    <input id="qr-base-url" value="{{ base_url }}" inputmode="url" aria-describedby="url-tip">
+  </label>
+  <button class="primary-button" id="regenerate-qr" type="button">重新生成二维码</button>
+</section>
+<p id="url-tip" class="lead" style="margin:-8px 0 18px">如果当前地址是 127.0.0.1，请改成学校服务器地址或本机局域网 IP，手机才能扫码访问。</p>
+
+<section class="qr-grid" id="qr-grid">
+  {% for module in modules %}
+  <article class="qr-card" data-path="{{ module.path }}" data-tone="{{ module.tone }}">
+    <div>
+      <div class="eyebrow">{{ '%02d'|format(loop.index) }} · QUICK LINK</div>
+      <h2>{{ module.name }}</h2>
+      <p>{{ module.description }}</p>
+      <code class="qr-url"></code>
+      <div class="qr-actions">
+        <button type="button" data-copy>复制链接</button>
+        <a href="{{ module.path }}">打开页面</a>
+      </div>
+    </div>
+    <div class="qr-code" aria-label="{{ module.name }}二维码"></div>
+  </article>
+  {% endfor %}
+</section>
+{% endblock %}
+{% block scripts %}
+<script src="{{ url_for('static', filename='vendor/qrcodejs/qrcode.min.js') }}"></script>
+<script src="{{ url_for('static', filename='js/mobile-access.js', v='20260714-copy1') }}"></script>
+{% endblock %}

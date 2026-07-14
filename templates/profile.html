@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% block title %}我的账号{% endblock %}
+{% block content %}
+<section class="page-heading"><div><div class="eyebrow">MY ACCOUNT</div><h1>我的账号</h1><p>查看当前登录身份，或退出后切换其他测试角色。</p></div></section>
+<section class="profile-layout">
+<section class="panel profile-panel">
+  <div class="profile-identity"><span class="avatar profile-avatar">{{ current_user.display_name[:1] }}</span><div><h2>{{ current_user.display_name }}</h2><p>@{{ current_user.username }}</p></div></div>
+  <dl class="profile-facts">
+    <div><dt>账号角色</dt><dd>{{ {'superadmin':'超级管理员','admin':'部门管理员','reviewer':'审核人','teacher':'教师'}.get(current_user.role) }}</dd></div>
+    <div><dt>考评方案</dt><dd>{{ current_user.scheme.name if current_user.scheme else '未指定' }}</dd></div>
+    <div><dt>方案编号</dt><dd><code>{{ current_user.scheme.code if current_user.scheme else '—' }}</code></dd></div>
+    <div><dt>身份标记</dt><dd>{{ '班主任 ' if current_user.is_homeroom_teacher else '' }}{{ '年段长' if current_user.is_grade_leader else '' }}{{ '无' if not current_user.is_homeroom_teacher and not current_user.is_grade_leader else '' }}</dd></div>
+  </dl>
+  <form method="post" action="{{ url_for('auth.logout') }}"><button class="danger-button full" type="submit">退出当前账号</button></form>
+</section>
+<section class="panel profile-password-panel">
+  <div class="eyebrow">PASSWORD</div><h2>修改我的密码</h2><p class="lead">所有角色都可以修改自己的登录密码。为确认是本人操作，需要先填写当前密码。</p>
+  <form method="post" action="{{ url_for('main.change_my_password') }}" class="stack-form">
+    <label>当前密码<input name="current_password" type="password" autocomplete="current-password" required></label>
+    <label>新密码<input name="new_password" type="password" minlength="8" autocomplete="new-password" required><small>至少8个字符，不能与当前密码相同。</small></label>
+    <label>再次输入新密码<input name="confirm_password" type="password" minlength="8" autocomplete="new-password" required></label>
+    <button class="primary-button" type="submit">确认修改密码</button>
+  </form>
+</section>
+</section>
+{% endblock %}

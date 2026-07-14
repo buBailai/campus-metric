@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% block title %}考评记录{% endblock %}
+{% block content %}
+<section class="page-heading">
+  <div><div class="eyebrow">RECORDS · {{ year.name if year else '' }}</div><h1>考评记录</h1><p>统一查看教师填报和管理员录入，管理员可直接调整最终分数。</p></div>
+  <a class="primary-button" href="{{ url_for('main.admin_entry_page') }}">新增录入</a>
+</section>
+
+<section class="summary-strip"><span>当前共 <strong>{{ rows|length }}</strong> 条记录</span><span>全部正式得分合计 <strong>{{ total|score }}</strong></span></section>
+<section class="panel">
+  <div class="responsive-table records-table">
+    <table>
+      <thead><tr><th>教师 / 项目</th><th>来源</th><th>状态</th><th>自动分</th><th>最终分</th><th>调整</th></tr></thead>
+      <tbody>
+      {% for row in rows %}
+      <tr>
+        <td data-label="教师 / 项目"><strong>{{ row.teacher }} · {{ row.indicator }}</strong><small>{{ row.category }} · {{ row.inputs }}</small></td>
+        <td data-label="来源">{{ '管理员录入' if row.source == 'admin' else '教师填报' }}</td>
+        <td data-label="状态"><span class="status-badge status-{{ row.status }}">{{ row.status_label }}</span></td>
+        <td data-label="自动分">{{ row.auto_score|score }}</td>
+        <td data-label="最终分"><strong>{{ row.final_score|score if row.final_score is not none else '—' }}</strong>{% if row.overridden %}<small class="danger-text">已人工调整</small>{% endif %}</td>
+        <td data-label="调整">
+          <details class="score-editor"><summary>修改分数</summary><form method="post" action="{{ url_for('main.override_record_score', record_id=row.id) }}"><input name="final_score" type="number" step="0.1" required value="{{ row.final_score if row.final_score is not none else row.auto_score }}"><input name="reason" placeholder="调整说明（可选）"><button class="primary-button" type="submit">保存生效</button></form></details>
+        </td>
+      </tr>
+      {% else %}<tr><td colspan="6"><div class="empty-state"><h3>还没有考评记录</h3><p>可先从管理员录入或教师填报开始。</p></div></td></tr>{% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% endblock %}

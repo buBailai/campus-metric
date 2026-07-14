@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% block title %}我的分数{% endblock %}
+{% block content %}
+<section class="page-heading">
+  <div><div class="eyebrow">MY SCORE · {{ year.name if year else '' }}</div><h1>我的分数</h1><p>仅显示本人分数和记录状态，不显示排名。</p></div>
+  <a class="primary-button" href="{{ url_for('main.teacher_entry_page') }}">新增填报</a>
+</section>
+
+<section class="stat-grid">
+  <article class="stat-card accent"><span>当前总分</span><strong>{{ totals.score|score }}</strong><small>已通过记录</small></article>
+  <article class="stat-card"><span>已通过</span><strong>{{ totals.approved }}</strong><small>已计入总分</small></article>
+  <article class="stat-card"><span>待审核</span><strong>{{ totals.pending }}</strong><small>暂不计分</small></article>
+  <article class="stat-card"><span>已退回</span><strong>{{ totals.rejected }}</strong><small>查看退回原因</small></article>
+</section>
+
+<section class="panel">
+  <div class="panel-heading"><div><div class="eyebrow">DETAILS</div><h2>分项明细</h2></div></div>
+  <div class="responsive-table">
+    <table>
+      <thead><tr><th>考评项目</th><th>填报内容</th><th>状态</th><th>得分</th><th>时间</th><th>操作</th></tr></thead>
+      <tbody>
+      {% for row in rows %}
+        <tr>
+          <td data-label="考评项目"><strong>{{ row.indicator }}</strong><small>{{ row.category }}</small></td>
+          <td data-label="填报内容">{{ row.inputs }}{% if row.review_note %}<small class="danger-text">审核意见：{{ row.review_note }}</small>{% endif %}</td>
+          <td data-label="状态"><span class="status-badge status-{{ row.status }}">{{ row.status_label }}</span></td>
+          <td data-label="得分"><strong>{{ row.final_score|score if row.final_score is not none else '—' }}</strong></td>
+          <td data-label="时间">{{ row.created_at.strftime('%Y-%m-%d') }}</td>
+          <td data-label="操作">{% if row.can_edit %}<a class="table-action" href="{{ url_for('main.teacher_edit_record_page', record_id=row.id) }}">{{ '修改并重新提交' if row.status == 'rejected' else '编辑待审核填报' }}</a>{% else %}<span class="muted-text">审核通过后只读</span>{% endif %}</td>
+        </tr>
+      {% else %}<tr><td colspan="6"><div class="empty-state"><h3>还没有考评记录</h3><p>完成首次填报后会显示在这里。</p></div></td></tr>{% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% endblock %}

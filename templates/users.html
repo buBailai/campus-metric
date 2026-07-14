@@ -1,0 +1,64 @@
+{% extends "base.html" %}
+{% block title %}账号管理{% endblock %}
+{% block content %}
+<section class="page-heading"><div><div class="eyebrow">SUPERADMIN · ACCOUNTS</div><h1>账号管理</h1><p>仅超级管理员可创建和维护部门管理员、审核人及教师账号，并明确账号默认所属方案。</p></div></section>
+
+<section class="panel account-import-panel">
+  <div>
+    <div class="eyebrow">BULK IMPORT</div><h2>批量导入账号</h2>
+    <p class="lead">下载模板后填写账号、角色和方案编号。系统会先校验整张表，全部通过后才一次性写入，已有账号不会被覆盖。</p>
+    <div class="button-row"><a class="secondary-button" href="{{ url_for('main.account_import_template') }}">下载 Excel 模板</a></div>
+  </div>
+  <form method="post" action="{{ url_for('main.import_accounts') }}" enctype="multipart/form-data" class="account-import-form">
+    <label class="file-drop"><input type="file" name="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" required><span><span class="file-icon">⇧</span><strong>选择填写好的账号表</strong><small>仅支持系统提供的 .xlsx 模板，单次最多 500 个账号</small></span></label>
+    <button class="primary-button full" type="submit">校验并导入账号</button>
+  </form>
+</section>
+
+<section class="account-layout">
+  <aside class="panel account-create">
+    <div class="eyebrow">NEW ACCOUNT</div><h2>新建账号</h2>
+    <form method="post" class="stack-form compact-form">
+      <label>姓名<input name="display_name" required placeholder="例：张老师"></label>
+      <label>登录账号<input name="username" required autocomplete="off" placeholder="建议使用工号或拼音"></label>
+      <label>工号（可选）<input name="employee_no"></label>
+      <label>账号角色<select name="role"><option value="teacher">教师</option><option value="reviewer">审核人</option><option value="admin">管理员</option></select></label>
+      <label>默认所属方案<select name="scheme_id">{% for scheme in schemes %}<option value="{{ scheme.id }}">{{ scheme.code }} · {{ scheme.name }}</option>{% endfor %}</select></label>
+      <label>初始密码<input name="password" type="password" minlength="8" required autocomplete="new-password"></label>
+      <label class="check-row"><input type="checkbox" name="is_homeroom_teacher" checked>班主任</label>
+      <label class="check-row"><input type="checkbox" name="is_grade_leader">年段长</label>
+      <button class="primary-button" type="submit">创建账号</button>
+    </form>
+  </aside>
+
+  <section class="panel">
+    <div class="panel-heading"><div><div class="eyebrow">{{ users|length }} ACCOUNTS</div><h2>已有账号</h2></div></div>
+    <div class="user-list">
+      {% for user in users %}
+      <article class="user-row">
+        <span class="avatar">{{ user.display_name[:1] }}</span>
+        <div class="user-main"><strong>{{ user.display_name }}</strong><small>@{{ user.username }}{% if user.employee_no %} · {{ user.employee_no }}{% endif %}</small></div>
+        <span class="badge {% if user.role in ['superadmin', 'admin'] %}warm{% endif %}">{{ {'superadmin':'超级管理员','admin':'部门管理员','reviewer':'审核人','teacher':'教师'}.get(user.role) }}</span>
+        <span class="status-badge status-{{ 'approved' if user.is_active_flag else 'rejected' }}">{{ '启用' if user.is_active_flag else '停用' }}</span>
+        <details class="row-menu">
+          <summary>···</summary>
+          <div>{% if user.role != 'superadmin' %}
+            <form method="post" action="{{ url_for('main.update_user_profile', user_id=user.id) }}">
+              <select name="role"><option value="teacher" {% if user.role == 'teacher' %}selected{% endif %}>教师</option><option value="reviewer" {% if user.role == 'reviewer' %}selected{% endif %}>审核人</option><option value="admin" {% if user.role == 'admin' %}selected{% endif %}>管理员</option></select>
+              <select name="scheme_id">{% for scheme in schemes %}<option value="{{ scheme.id }}" {% if user.scheme_id == scheme.id %}selected{% endif %}>{{ scheme.code }} · {{ scheme.name }}</option>{% endfor %}</select>
+              <input name="tenure_years" type="number" min="0" value="{{ user.tenure_years }}" placeholder="班主任年限">
+              <label class="check-row"><input type="checkbox" name="is_homeroom_teacher" {% if user.is_homeroom_teacher %}checked{% endif %}>班主任</label>
+              <label class="check-row"><input type="checkbox" name="is_grade_leader" {% if user.is_grade_leader %}checked{% endif %}>年段长</label>
+              <button type="submit">保存角色与标记</button>
+            </form>
+            <form method="post" action="{{ url_for('main.toggle_user', user_id=user.id) }}"><button type="submit">{{ '停用账号' if user.is_active_flag else '启用账号' }}</button></form>
+            {% endif %}
+            <form method="post" action="{{ url_for('main.reset_user_password', user_id=user.id) }}"><input name="password" type="password" minlength="8" required placeholder="输入新密码"><button type="submit">重置密码</button></form>
+          </div>
+        </details>
+      </article>
+      {% endfor %}
+    </div>
+  </section>
+</section>
+{% endblock %}

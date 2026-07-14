@@ -1,0 +1,2 @@
+APP_VERSION = '0.3.0'
+UPDATE_CHANNEL = 'stable'

@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block title %}AI 大模型配置{% endblock %}
+{% block content %}
+<section class="page-heading"><div><div class="eyebrow">SUPERADMIN · AI MODEL</div><h1>AI 大模型配置</h1><p>由超级管理员统一配置，部门管理员只能调用，不会接触 API Key。</p></div></section>
+<section class="settings-grid">
+  <section class="panel"><div class="eyebrow">SCHOOL API</div><h2>全校统一配置</h2><form method="post" class="stack-form" id="ai-config-form">
+    <label>API 来源<select name="provider" id="ai-provider">{% for provider in providers %}<option value="{{ provider.key }}" {% if setting.provider == provider.key %}selected{% endif %}>{{ provider.label }}</option>{% endfor %}</select><small id="provider-hint">支持豆包、Ollama 与常见 OpenAI 兼容厂商。</small></label>
+    <label>Base URL<input name="api_base" id="ai-base" value="{{ setting.api_base }}" placeholder="https://api.example.com/v1"><small>填到 /v1 即可，系统自动拼接 /chat/completions。</small></label>
+    <label>API Key<input name="api_key" type="password" autocomplete="new-password" placeholder="{{ '已保存，留空表示不修改' if has_key else '请输入 API Key' }}"></label>
+    <label>视觉模型 ID<input name="model_name" id="ai-model" value="{{ setting.model_name }}" placeholder="请以厂商当前支持图像的模型 ID 为准"></label>
+    <label class="check-row"><input type="checkbox" name="enabled" {% if setting.enabled %}checked{% endif %}>启用证书识别及评价方案 AI 转换</label>
+    <button class="primary-button" type="submit">保存 AI 配置</button>
+  </form></section>
+  <aside class="panel"><div class="eyebrow">CONNECTION TEST</div><h2>连接测试</h2><p class="lead">先保存配置，再发起一次最小文本请求。测试会产生少量 API 用量。</p><button class="secondary-button full" id="test-ai" type="button">测试 API 连接</button><div id="ai-test-result" class="validation-result" hidden></div><div class="security-note"><strong>安全说明</strong><p>Key 只保存在本机 SQLite，不出现在前端源码、日志、导出文件和更新包中。</p></div></aside>
+</section>
+{% endblock %}
+{% block scripts %}<script>
+const providerRows={{ providers|tojson }};
+const presets=Object.fromEntries(providerRows.map(row=>[row.key,row]));
+function applyProvider(key){const p=presets[key];if(!p)return;if(p.base_url)document.getElementById('ai-base').value=p.base_url;if(p.model)document.getElementById('ai-model').value=p.model;document.getElementById('provider-hint').textContent=p.needs_key?'需要该厂商的 API Key。':'Ollama 为本机服务，可不填写 API Key。';}
+document.getElementById('ai-provider').addEventListener('change',e=>applyProvider(e.target.value));
+document.getElementById('test-ai').addEventListener('click',async()=>{const box=document.getElementById('ai-test-result');box.hidden=false;box.textContent='正在连接…';try{const r=await fetch({{ url_for('main.test_ai_api')|tojson }},{method:'POST'});const d=await r.json();box.className='validation-result '+(d.ok?'valid':'invalid');box.textContent=d.message;}catch(error){box.className='validation-result invalid';box.textContent='请求失败，请检查网络后重试。';}});
+</script>{% endblock %}

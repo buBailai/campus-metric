@@ -1,0 +1,102 @@
+{% extends "base.html" %}
+{% block title %}考评字典{% endblock %}
+{% block content %}
+<section class="page-heading">
+  <div><div class="eyebrow">DICTIONARY · {{ year.name if year else '' }}</div><h1>考评字典</h1><p>手动维护，或让 AI 按模板生成 JSON 后一次导入。</p></div>
+  <div class="button-row">
+    <a class="primary-button" href="{{ url_for('main.dictionary_manual_page') }}">手动配置</a>
+    <a class="secondary-button" href="{{ url_for('main.dictionary_download', kind='blank') }}">下载空白模板</a>
+    <a class="secondary-button" href="{{ url_for('main.dictionary_download', kind='example') }}">下载完整示例</a>
+    <a class="secondary-button" href="{{ url_for('main.dictionary_guide') }}">字段说明</a>
+  </div>
+</section>
+
+<section class="dictionary-layout">
+  <div class="panel">
+    <div class="panel-heading"><div><div class="eyebrow">CURRENT DICTIONARY</div><h2>当前指标结构</h2></div>
+      {% if dictionary and dictionary['categories'] %}<a class="text-link" href="{{ url_for('main.dictionary_download', kind='current') }}">导出 JSON</a>{% endif %}
+    </div>
+    <div id="current-dictionary">
+      {% if dictionary and dictionary['categories'] %}
+        {% for category in dictionary['categories'] %}
+        <details class="category-block" open>
+          <summary><span>{{ category['name'] }}</span><small>{{ category['items']|length }} 项 · 上限 {{ category['max_score'] if category['max_score'] is not none else '未设' }}</small></summary>
+          <div class="indicator-list">
+            {% for item in category['items'] %}
+            {% set rule = item['scoring_rule'] %}{% set tracking = item['secondary_tracking'] %}
+            {% set type_labels = {'manual_score':'直接给分','fixed_score':'固定分','tiered_score':'分档计分','count_score':'次数加分','count_deduction':'次数扣分','range_score':'区间计分','matrix_score':'级别×奖次','tenure_score':'年限分档','fixed_bonus':'固定加分'} %}
+            {% set source_labels = {'teacher':'教师填报','admin':'管理员录入','excel':'外部导入'} %}
+            <details class="indicator-detail-card" id="indicator-{{ item['id'] }}">
+              <summary>
+                <span><strong>{{ item['name'] }}</strong><small>{{ item['code'] }}</small></span>
+                <span class="badge-row"><span class="badge">{{ source_labels.get(item['data_source'], item['data_source']) }}</span><span class="badge warm">{{ type_labels.get(item['scoring_type'], item['scoring_type']) }}</span><span class="indicator-expand">查看规则</span></span>
+              </summary>
+              <div class="indicator-detail-body">
+                <p class="indicator-description">{{ item['description'] or '暂无指标说明。' }}</p>
+                <div class="indicator-facts">
+                  <span><small>分数组</small><strong>{{ {'base':'基础分','bonus':'加分','deduction':'扣分'}.get(item['score_group'], item['score_group']) }}</strong></span>
+                  <span><small>多条记录</small><strong>{{ '允许' if item['allow_multiple_records'] else '不允许' }}</strong></span>
+                  <span><small>证明材料</small><strong>{{ '必须上传' if item['requires_evidence'] else '不要求' }}</strong></span>
+                  <span><small>AI 识别</small><strong>{{ '已启用' if item['ai_enabled'] else '未启用' }}</strong></span>
+                </div>
+                <section class="scoring-rule-card">
+                  <div class="eyebrow">SCORING RULE</div><h3>具体计算方式</h3>
+                  {% if item['scoring_type'] == 'manual_score' %}
+                    <p>管理员直接给分，允许范围：<strong>{{ rule.get('min_score', 0) }}—{{ rule.get('max_score', '未设') }} 分</strong>。</p>
+                  {% elif item['scoring_type'] in ['fixed_score','fixed_bonus'] %}
+                    <p>符合条件计 <strong>{{ rule.get('score', 0) }} 分</strong>，不符合计 0 分。</p>
+                  {% elif item['scoring_type'] == 'tiered_score' %}
+                    <div class="rule-option-list">{% for option in rule.get('options', []) %}<span><b>{{ option.get('label', option.get('value')) }}</b><strong>{{ option.get('score', 0) }} 分</strong></span>{% endfor %}</div>
+                  {% elif item['scoring_type'] == 'count_score' %}
+                    <p>数量 × {{ rule.get('score_per_count', 0) }} 分；最低 {{ rule.get('min_score', 0) }} 分{% if rule.get('max_score') is not none %}，最高 {{ rule.get('max_score') }} 分{% endif %}。</p>
+                  {% elif item['scoring_type'] == 'count_deduction' %}
+                    <p>从 {{ rule.get('initial_score', 0) }} 分起，每次扣 {{ rule.get('score_per_count', 0) }} 分{% if rule.get('max_deduction') is not none %}，最多扣 {{ rule.get('max_deduction') }} 分{% endif %}；最低 {{ rule.get('min_score', 0) }} 分。</p>
+                  {% elif item['scoring_type'] == 'range_score' %}
+                    <div class="rule-option-list">{% for range in rule.get('ranges', []) %}<span><b>{{ range.get('min') if range.get('min') is not none else '不限' }} ～ {{ range.get('max') if range.get('max') is not none else '不限' }}</b><strong>{{ range.get('score', 0) }} 分</strong></span>{% endfor %}</div>
+                  {% elif item['scoring_type'] == 'matrix_score' %}
+                    <div class="responsive-table"><table><thead><tr><th>级别</th><th>奖次</th><th>分数</th></tr></thead><tbody>{% for score in rule.get('scores', []) %}<tr><td data-label="级别">{{ score.get('level_label', score.get('level')) }}</td><td data-label="奖次">{{ score.get('rank_label', score.get('rank')) }}</td><td data-label="分数"><strong>{{ score.get('score', 0) }} 分</strong></td></tr>{% endfor %}</tbody></table></div>
+                  {% elif item['scoring_type'] == 'tenure_score' %}
+                    <div class="rule-option-list">{% for tier in rule.get('tiers', []) %}<span><b>满 {{ tier.get('min_years', 0) }} 年</b><strong>{{ tier.get('score', 0) }} 分</strong></span>{% endfor %}</div>
+                  {% else %}<p>请展开原始规则 JSON 核对。</p>{% endif %}
+                </section>
+                {% if tracking.get('enabled') %}<div class="tracking-rule"><strong>二级跟踪字段：{{ tracking.get('label', '补充字段') }}</strong><span>{{ '必填' if tracking.get('required') else '选填' }} · {{ '下拉选择' if tracking.get('input_type') == 'select' else '文本填写' }}</span></div>{% endif %}
+                <details class="rule-json"><summary>查看原始规则 JSON</summary><pre>{{ rule|tojson(indent=2) }}</pre></details>
+                <div class="button-row"><a class="secondary-button" href="{{ url_for('main.dictionary_manual_page', indicator_id=item['id']) }}#indicator-{{ item['id'] }}">编辑此指标</a></div>
+              </div>
+            </details>
+            {% endfor %}
+          </div>
+        </details>
+        {% endfor %}
+      {% else %}
+      <div class="empty-state"><span>◇</span><h3>还没有考评字典</h3><p>下载模板，结合学校方案让 AI 生成 JSON，然后在右侧校验导入。</p></div>
+      {% endif %}
+    </div>
+  </div>
+
+  <aside class="panel import-panel">
+    <div class="eyebrow">DOCUMENT TO DICTIONARY</div>
+    <h2>评价方案 AI 导入</h2>
+    <p>上传 PDF 或 Markdown，系统会调用超级管理员配置的大模型，自动生成、校验并写入当前方案。</p>
+    <label class="file-drop" for="scheme-document-file">
+      <input id="scheme-document-file" type="file" accept="application/pdf,text/markdown,.pdf,.md,.markdown">
+      <span class="file-icon">✦</span><strong>选择评价方案文件</strong><small id="scheme-document-name">PDF / MD，最大 20 MB</small>
+    </label>
+    <button class="primary-button full" id="ai-document-import" type="button" disabled>调用 AI 并直接写入</button>
+    <div id="ai-document-result" class="validation-result" hidden></div>
+    <div class="panel-divider"></div>
+    <div class="eyebrow">AI-ASSISTED IMPORT</div>
+    <h2>JSON 快速导入</h2>
+    <p>上传后先校验和预览，不会立即写入数据库。</p>
+    <label class="file-drop" for="dictionary-file">
+      <input id="dictionary-file" type="file" accept="application/json,.json">
+      <span class="file-icon">↥</span><strong>选择 JSON 文件</strong><small id="file-name">最大 3 MB</small>
+    </label>
+    <button class="primary-button full" id="validate-button" type="button" disabled>校验并预览</button>
+    <div id="validation-result" class="validation-result" hidden></div>
+    <label class="confirm-row" id="confirm-row" hidden><input type="checkbox" id="confirm-import">我已核对指标、分数和积分类型</label>
+    <button class="danger-button full" id="import-button" type="button" hidden disabled>确认整套导入</button>
+  </aside>
+</section>
+{% endblock %}
+{% block scripts %}<script src="{{ url_for('static', filename='js/dictionary.js', v='20260714-prefix1') }}"></script>{% endblock %}

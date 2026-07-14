@@ -1,0 +1,131 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#dbe7ee">
+  <title>{% block title %}CampusMetric{% endblock %} · CampusMetric</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/app.css', v='20260714-cross-archive1') }}">
+  {% block head %}{% endblock %}
+</head>
+<body class="{% if current_user.is_authenticated %}app-body{% else %}auth-body{% endif %}">
+  {% set page_content %}{% block content %}{% endblock %}{% endset %}
+  {% if current_user.is_authenticated %}
+  {% set endpoint = request.endpoint or '' %}
+  <div class="app-frame">
+    <aside class="sidebar">
+      <a class="brand" href="{{ url_for('main.dashboard') }}">
+        <span class="brand-mark">C</span>
+        <span><strong>CampusMetric</strong><small>校园评价系统</small></span>
+      </a>
+
+      <div class="side-label">MAIN</div>
+      <nav class="side-nav" aria-label="主导航">
+        <a class="{% if endpoint == 'main.dashboard' %}active{% endif %}" href="{{ url_for('main.dashboard') }}"><span class="nav-icon">⌂</span>工作台</a>
+        {% if current_user.role in ['superadmin', 'admin'] %}
+        <a class="{% if endpoint == 'main.dictionary_page' %}active{% endif %}" href="{{ url_for('main.dictionary_page') }}"><span class="nav-icon">◇</span>考评字典</a>
+        <a class="{% if endpoint == 'main.admin_entry_page' %}active{% endif %}" href="{{ url_for('main.admin_entry_page') }}"><span class="nav-icon">＋</span>管理员录入</a>
+        <a class="{% if endpoint == 'main.review_page' %}active{% endif %}" href="{{ url_for('main.review_page') }}"><span class="nav-icon">✓</span>一级审核</a>
+        <a class="{% if endpoint in ['main.records_page', 'main.override_record_score'] %}active{% endif %}" href="{{ url_for('main.records_page') }}"><span class="nav-icon">◫</span>考评记录</a>
+        <a class="{% if endpoint == 'main.ranking_page' %}active{% endif %}" href="{{ url_for('main.ranking_page') }}"><span class="nav-icon">↗</span>总分排名</a>
+        <a class="{% if endpoint == 'main.archive_analytics_page' %}active{% endif %}" href="{{ url_for('main.archive_analytics_page') }}"><span class="nav-icon">⌁</span>档案跟踪</a>
+        {% if current_user.role == 'superadmin' %}
+        <a class="{% if endpoint in ['main.users_page', 'main.import_accounts', 'main.account_import_template', 'main.toggle_user', 'main.reset_user_password'] %}active{% endif %}" href="{{ url_for('main.users_page') }}"><span class="nav-icon">◎</span>账号管理</a>
+        {% endif %}
+        <a class="{% if endpoint == 'main.scheme_settings_page' %}active{% endif %}" href="{{ url_for('main.scheme_settings_page') }}"><span class="nav-icon">≡</span>方案与学年</a>
+        {% if current_user.role == 'superadmin' %}
+        <a class="{% if endpoint == 'main.ai_settings_page' %}active{% endif %}" href="{{ url_for('main.ai_settings_page') }}"><span class="nav-icon">✦</span>AI 配置</a>
+        <a class="{% if endpoint == 'main.update_settings_page' %}active{% endif %}" href="{{ url_for('main.update_settings_page') }}"><span class="nav-icon">↻</span>在线更新</a>
+        {% endif %}
+        <a class="{% if endpoint == 'main.mobile_access_page' %}active{% endif %}" href="{{ url_for('main.mobile_access_page') }}"><span class="nav-icon">▦</span>移动访问</a>
+        {% elif current_user.role == 'reviewer' %}
+        <a class="{% if endpoint == 'main.review_page' %}active{% endif %}" href="{{ url_for('main.review_page') }}"><span class="nav-icon">✓</span>一级审核</a>
+        {% else %}
+        <a class="{% if endpoint == 'main.teacher_entry_page' %}active{% endif %}" href="{{ url_for('main.teacher_entry_page') }}"><span class="nav-icon">＋</span>我的填报</a>
+        <a class="{% if endpoint == 'main.my_results_page' %}active{% endif %}" href="{{ url_for('main.my_results_page') }}"><span class="nav-icon">◫</span>我的分数</a>
+        {% endif %}
+      </nav>
+
+      <div class="sidebar-spacer"></div>
+      {% if current_user.role in ['superadmin', 'admin'] %}
+      <a class="mobile-promo" href="{{ url_for('main.mobile_access_page') }}">
+        <span class="promo-orb">▦</span>
+        <strong>手机快捷访问</strong>
+        <small>生成模块二维码</small>
+      </a>
+      {% endif %}
+      <div class="sidebar-user">
+        <span class="avatar">{{ current_user.display_name[:1] }}</span>
+        <span><strong>{{ current_user.display_name }}</strong><small>{{ {'superadmin':'超级管理员','admin':'部门管理员','reviewer':'审核人','teacher':'教师'}.get(current_user.role, current_user.role) }}</small></span>
+        <form action="{{ url_for('auth.logout') }}" method="post"><button type="submit" aria-label="退出登录">↗</button></form>
+      </div>
+    </aside>
+
+    <section class="workspace">
+      <header class="workspace-bar">
+        <div class="mobile-brand"><span class="brand-mark">C</span><strong>CampusMetric</strong></div>
+        <div class="workspace-crumb"><span class="online-dot"></span>{{ current_user.display_name }}的工作空间</div>
+        <div class="workspace-actions">
+          {% if accessible_schemes|length > 1 %}<form method="post" action="{{ url_for('main.select_scheme', scheme_id=active_scheme.id if active_scheme else accessible_schemes[0].id) }}" class="scheme-switch" id="scheme-switch-form"><select id="scheme-switch-select" aria-label="切换方案">{% for scheme in accessible_schemes %}<option value="{{ scheme.id }}" {% if active_scheme and scheme.id == active_scheme.id %}selected{% endif %}>{{ scheme.code }} · {{ scheme.name }}</option>{% endfor %}</select></form>{% endif %}
+          <span class="year-chip">{{ active_year.label if active_year else '当前学年' }}</span>
+          <a class="avatar small" href="{{ url_for('main.profile_page') }}" aria-label="账号与退出">{{ current_user.display_name[:1] }}</a>
+        </div>
+      </header>
+
+      <main class="page-shell">
+        {% with messages = get_flashed_messages(with_categories=true) %}
+          {% for category, message in messages %}<div class="alert alert-{{ category }}">{{ message }}</div>{% endfor %}
+        {% endwith %}
+        {{ page_content }}
+      </main>
+    </section>
+  </div>
+
+  <nav class="mobile-bottom-nav" aria-label="手机导航">
+    <a class="{% if endpoint == 'main.dashboard' %}active{% endif %}" href="{{ url_for('main.dashboard') }}"><span>⌂</span><small>首页</small></a>
+    {% if current_user.role in ['superadmin', 'admin'] %}
+    <a class="{% if endpoint == 'main.records_page' %}active{% endif %}" href="{{ url_for('main.records_page') }}"><span>◫</span><small>记录</small></a>
+    <a class="{% if endpoint == 'main.ranking_page' %}active{% endif %}" href="{{ url_for('main.ranking_page') }}"><span>↗</span><small>排名</small></a>
+    <a class="{% if endpoint == 'main.admin_entry_page' %}active{% endif %}" href="{{ url_for('main.admin_entry_page') }}"><span>＋</span><small>录入</small></a>
+    <a class="{% if endpoint == 'main.review_page' %}active{% endif %}" href="{{ url_for('main.review_page') }}"><span>✓</span><small>审核</small></a>
+    {% if current_user.role == 'superadmin' %}<a class="{% if endpoint == 'main.users_page' %}active{% endif %}" href="{{ url_for('main.users_page') }}"><span>◎</span><small>账号</small></a>{% endif %}
+    <a class="{% if endpoint == 'main.mobile_access_page' %}active{% endif %}" href="{{ url_for('main.mobile_access_page') }}"><span>▦</span><small>二维码</small></a>
+    {% elif current_user.role == 'reviewer' %}
+    <a class="{% if endpoint == 'main.review_page' %}active{% endif %}" href="{{ url_for('main.review_page') }}"><span>✓</span><small>审核</small></a>
+    {% else %}
+    <a class="{% if endpoint == 'main.teacher_entry_page' %}active{% endif %}" href="{{ url_for('main.teacher_entry_page') }}"><span>＋</span><small>填报</small></a>
+    <a class="{% if endpoint == 'main.my_results_page' %}active{% endif %}" href="{{ url_for('main.my_results_page') }}"><span>◫</span><small>分数</small></a>
+    {% endif %}
+    <a class="{% if endpoint == 'main.profile_page' %}active{% endif %}" href="{{ url_for('main.profile_page') }}"><span>●</span><small>我的</small></a>
+  </nav>
+  {% else %}
+  <main class="auth-shell">
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% for category, message in messages %}<div class="alert alert-{{ category }}">{{ message }}</div>{% endfor %}
+    {% endwith %}
+    {{ page_content }}
+  </main>
+  {% endif %}
+
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+  <script>
+    window.APP_ROOT = {{ request.script_root|tojson }};
+    window.appUrl = (path) => `${window.APP_ROOT}${path.startsWith('/') ? path : `/${path}`}`;
+    window.showToast = (message, tone = 'success') => {
+      const toast = document.getElementById('toast');
+      toast.textContent = message;
+      toast.dataset.tone = tone;
+      toast.classList.add('show');
+      clearTimeout(window.__toastTimer);
+      window.__toastTimer = setTimeout(() => toast.classList.remove('show'), 2600);
+    };
+    const schemeSelect = document.getElementById('scheme-switch-select');
+    if (schemeSelect) schemeSelect.addEventListener('change', () => {
+      const form = document.getElementById('scheme-switch-form');
+      form.action = window.appUrl(`/scheme/select/${schemeSelect.value}`);
+      form.submit();
+    });
+  </script>
+  {% block scripts %}{% endblock %}
+</body>
+</html>

@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% block title %}工作台{% endblock %}
+{% block content %}
+<section class="page-heading">
+  <div><div class="eyebrow">{{ year.name if year else '尚未设置学年' }}</div><h1>{{ current_user.display_name }}，你好</h1></div>
+  {% if current_user.role in ['superadmin', 'admin'] %}
+  <a class="primary-button" href="{{ url_for('main.dictionary_page') }}">配置考评字典</a>
+  {% else %}
+  <a class="primary-button" href="{{ url_for('main.teacher_entry_page') }}">开始填报</a>
+  {% endif %}
+</section>
+
+{% if current_user.role in ['superadmin', 'admin'] %}
+<section class="stat-grid">
+  <article class="stat-card"><span>教师账号</span><strong>{{ stats.teachers }}</strong><small>当前启用</small></article>
+  <article class="stat-card accent"><span>字典指标</span><strong>{{ stats.indicators }}</strong><small>当前学年</small></article>
+  <article class="stat-card"><span>待审核</span><strong>{{ stats.pending }}</strong><small>教师已提交</small></article>
+  <article class="stat-card"><span>考评记录</span><strong>{{ stats.records }}</strong><small>当前学年</small></article>
+</section>
+<section class="panel bento-panel">
+  <div><div class="eyebrow">WORKFLOW</div><h2>从字典到正式得分</h2><p>教师填报进入一级审核，管理员录入可直接生效。所有正式分数在考评记录中统一查看和留痕。</p></div>
+  <div class="flow-steps"><a href="{{ url_for('main.dictionary_page') }}">01 配置字典</a><a href="{{ url_for('main.admin_entry_page') }}">02 录入数据</a><a href="{{ url_for('main.review_page') }}">03 审核填报</a><a href="{{ url_for('main.records_page') }}">04 查看分数</a></div>
+</section>
+{% elif current_user.role == 'reviewer' %}
+<section class="stat-grid">
+  <article class="stat-card accent"><span>待审核</span><strong>{{ stats.pending }}</strong><small>需要处理</small></article>
+  <article class="stat-card"><span>已通过</span><strong>{{ stats.approved }}</strong><small>已计入分数</small></article>
+  <article class="stat-card"><span>已退回</span><strong>{{ stats.rejected }}</strong><small>教师可查看原因</small></article>
+  <article class="stat-card"><span>教师填报</span><strong>{{ stats.records }}</strong><small>当前学年</small></article>
+</section>
+<section class="panel bento-panel"><div><div class="eyebrow">REVIEW DESK</div><h2>处理待审核材料</h2><p>核对教师填报内容和系统计算分数，通过后即计入教师正式总分。</p></div><a class="primary-button" href="{{ url_for('main.review_page') }}">进入一级审核</a></section>
+{% else %}
+<section class="stat-grid">
+  <article class="stat-card accent"><span>当前总分</span><strong>{{ '%.1f'|format(stats.score) }}</strong><small>仅本人可见</small></article>
+  <article class="stat-card"><span>全部记录</span><strong>{{ stats.records }}</strong><small>当前学年</small></article>
+  <article class="stat-card"><span>待审核</span><strong>{{ stats.pending }}</strong><small>暂不计入正式分数</small></article>
+  <article class="stat-card"><span>已通过</span><strong>{{ stats.approved }}</strong><small>已计入正式分数</small></article>
+</section>
+{% endif %}
+{% endblock %}

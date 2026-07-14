@@ -1,0 +1,65 @@
+{% extends "base.html" %}
+{% block title %}一级审核{% endblock %}
+{% block content %}
+<section class="page-heading">
+  <div><div class="eyebrow">REVIEW DESK</div><h1>一级审核</h1><p>教师填报经过一次审核后计入正式分数。</p></div>
+</section>
+
+<nav class="filter-pills" aria-label="审核状态">
+  {% for value, label in [('pending','待审核'), ('approved','已通过'), ('rejected','已退回'), ('all','全部')] %}
+  <a class="{% if status == value %}active{% endif %}" href="{{ url_for('main.review_page', status=value) }}">{{ label }}</a>
+  {% endfor %}
+</nav>
+
+<section class="record-stack">
+  {% for row in rows %}
+  <details class="record-card review-record-card">
+    <summary class="review-record-summary">
+      <div class="review-summary-main"><div class="eyebrow">{{ row.category }}</div><h2>{{ row.indicator }}</h2><small>{{ row.teacher }} · {{ row.created_at.strftime('%m-%d %H:%M') }}</small></div>
+      <div class="review-summary-side"><strong>{{ row.auto_score|score }} 分</strong><span class="status-badge status-{{ row.status }}">{{ row.status_label }}</span><small class="expand-label">展开完整内容</small></div>
+    </summary>
+    <div class="review-record-body">
+    <div class="record-meta">
+      <span><small>填报教师</small><strong>{{ row.teacher }}</strong></span>
+      <span><small>预计得分</small><strong>{{ row.auto_score|score }} 分</strong></span>
+      <span><small>提交时间</small><strong>{{ row.created_at.strftime('%m-%d %H:%M') }}</strong></span>
+    </div>
+    <div class="record-detail"><strong>填报数据</strong><div class="review-field-grid">{% for field in row.input_fields %}<span><small>{{ field.label }}</small><b>{{ field.value }}</b></span>{% else %}<p>无</p>{% endfor %}</div></div>
+    {% if row.tracking %}<div class="record-detail"><strong>{{ row.tracking_label }}</strong><p>{{ row.tracking }}</p></div>{% endif %}
+    {% if row.note %}<div class="record-detail"><strong>补充说明</strong><p>{{ row.note }}</p></div>{% endif %}
+    {% if row.attachments %}<div class="record-detail"><strong>证明材料</strong><div class="attachment-grid">{% for attachment in row.attachments %}{% set image_url = url_for('main.view_attachment', attachment_id=attachment.id) %}<button class="attachment-preview" type="button" data-attachment-preview data-image-url="{{ image_url }}" data-image-name="{{ attachment.name|e }}"><img src="{{ image_url }}" alt="{{ attachment.name }}"><span>{{ attachment.name }}</span></button>{% endfor %}</div></div>{% endif %}
+    {% if row.review_note %}<div class="record-detail review-note"><strong>审核意见</strong><p>{{ row.review_note }}</p></div>{% endif %}
+    {% if row.status == 'pending' %}
+    <form method="post" action="{{ url_for('main.review_record', record_id=row.id) }}" class="review-form">
+      <label>审核意见<textarea name="review_note" rows="2" placeholder="通过时可选，退回时必填"></textarea></label>
+      <div class="review-actions">
+        <button class="secondary-button" type="submit" name="action" value="reject">退回修改</button>
+        <button class="primary-button" type="submit" name="action" value="approve">通过并计分</button>
+      </div>
+    </form>
+    {% endif %}
+    </div>
+  </details>
+  {% else %}
+  <div class="panel empty-state"><span>✓</span><h3>当前没有记录</h3><p>该状态下暂无教师填报。</p></div>
+  {% endfor %}
+</section>
+<div class="attachment-lightbox" id="attachment-lightbox" hidden role="dialog" aria-modal="true" aria-label="证明材料预览">
+  <div class="attachment-lightbox-card">
+    <button class="attachment-lightbox-close" id="attachment-lightbox-close" type="button" aria-label="关闭预览">×</button>
+    <img id="attachment-lightbox-image" alt="证明材料大图">
+    <p id="attachment-lightbox-name"></p>
+  </div>
+</div>
+{% endblock %}
+{% block scripts %}<script>
+(() => {
+  const lightbox=document.getElementById('attachment-lightbox'),image=document.getElementById('attachment-lightbox-image'),name=document.getElementById('attachment-lightbox-name');
+  if(!lightbox)return;
+  const close=()=>{lightbox.hidden=true;image.removeAttribute('src');document.body.style.overflow='';};
+  document.querySelectorAll('[data-attachment-preview]').forEach(button=>button.addEventListener('click',()=>{image.src=button.dataset.imageUrl;image.alt=button.dataset.imageName||'证明材料大图';name.textContent=button.dataset.imageName||'';lightbox.hidden=false;document.body.style.overflow='hidden';}));
+  document.getElementById('attachment-lightbox-close').addEventListener('click',close);
+  lightbox.addEventListener('click',event=>{if(event.target===lightbox)close();});
+  document.addEventListener('keydown',event=>{if(event.key==='Escape'&&!lightbox.hidden)close();});
+})();
+</script>{% endblock %}
