@@ -8,8 +8,8 @@ from pathlib import Path
 INCLUDE = [
     'app.py', 'evaluation_app', 'templates', 'static', 'scripts', 'docs', 'examples', 'vendor', 'deployment',
     'requirements.txt', 'start.sh', 'start.bat', 'portable_launcher.py',
-    'CampusMetric-启动.bat', '校园评价系统-免安装启动.bat', 'README.md', 'LICENSE', 'SECURITY.md', '开发进度.md',
-    '通用型评价系统产品功能大纲.md', '班主任考评方案指标与计分规则梳理.md',
+    'CampusMetric-启动.bat', 'README.md', 'LICENSE', 'SECURITY.md', '开发进度.md',
+    '班主任考评方案指标与计分规则梳理.md',
 ]
 
 

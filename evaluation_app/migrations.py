@@ -119,8 +119,6 @@ def run_compatibility_migrations():
     update_source = db.session.get(SystemSetting, 'update_base_url')
     if update_source is None:
         db.session.add(SystemSetting(
-            key='update_base_url', value='http://121.199.56.216/campus-evaluation/updates',
+            key='update_base_url', value='',
         ))
-    elif not update_source.value.strip():
-        update_source.value = 'http://121.199.56.216/campus-evaluation/updates'
     db.session.commit()

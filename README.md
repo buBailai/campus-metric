@@ -1,10 +1,23 @@
+<div align="center">
+
 # CampusMetric
+
+**字典驱动、移动优先的开源校园量化评价系统。**
+
+<p>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-brightgreen" alt="MIT License"></a>
+  <img src="https://img.shields.io/badge/python-3.11%2B-blue" alt="Python 3.11+">
+  <img src="https://img.shields.io/badge/version-v0.3.0-8D68F6" alt="v0.3.0">
+  <img src="https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-17191C" alt="Windows, macOS and Linux">
+</p>
+
+</div>
+
+---
 
 CampusMetric 是一套面向学校本地部署的开源校园量化评价系统。它通过考评字典动态生成教师端和管理端表单，支持多方案、材料审核、自动积分、长期档案和可选的 AI 材料识别。
 
-- 在线体验：http://121.199.56.216/campus-evaluation/app/
-- 项目主页：http://121.199.56.216/campus-evaluation/
-- Windows 免安装包：http://121.199.56.216/campus-evaluation/downloads/CampusMetric-Windows-Portable-0.3.0.zip
+> 开源仓库不提供公开下载；请按下文从源码自行部署运行。
 
 ## 技术路线
 
