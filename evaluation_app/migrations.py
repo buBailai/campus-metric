@@ -5,7 +5,7 @@ from werkzeug.security import generate_password_hash
 
 import json
 
-from .models import EvaluationRecord, EvaluationScheme, Indicator, SchemeMembership, SystemSetting, User
+from .models import AIModelSetting, EvaluationRecord, EvaluationScheme, Indicator, SchemeMembership, SystemSetting, User
 
 
 def run_compatibility_migrations():
@@ -28,6 +28,7 @@ def run_compatibility_migrations():
     extra_additions = {
         'evaluation_scheme': [('owner_user_id', 'INTEGER REFERENCES user(id)')],
         'academic_year': [('display_name', 'VARCHAR(50)')],
+        'ai_model_setting': [('purpose', "VARCHAR(30) NOT NULL DEFAULT 'reasoning'")],
     }
     for table, columns_to_add in extra_additions.items():
         if table not in inspector.get_table_names():
@@ -88,6 +89,21 @@ def run_compatibility_migrations():
         }, ensure_ascii=False)
     db.session.commit()
 
+    # v0.3.5：AI 配置按用途拆分。旧版唯一模型保留为文本思考模型，
+    # 并复制一份作为视觉识别模型，保证升级后原有证书识别不会突然失效。
+    reasoning_setting = AIModelSetting.query.filter_by(purpose='reasoning').order_by(AIModelSetting.id).first()
+    vision_setting = AIModelSetting.query.filter_by(purpose='vision').order_by(AIModelSetting.id).first()
+    if reasoning_setting is not None and vision_setting is None:
+        db.session.add(AIModelSetting(
+            purpose='vision',
+            provider=reasoning_setting.provider,
+            api_base=reasoning_setting.api_base,
+            api_key=reasoning_setting.api_key,
+            model_name=reasoning_setting.model_name,
+            enabled=reasoning_setting.enabled,
+        ))
+        db.session.commit()
+
     # 旧版管理员保留为部门管理员；首次升级额外创建本地超级管理员。
     superadmin = User.query.filter_by(role='superadmin').first()
     legacy_admin = User.query.filter_by(role='admin').order_by(User.id).first()
@@ -119,6 +135,7 @@ def run_compatibility_migrations():
     update_source = db.session.get(SystemSetting, 'update_base_url')
     if update_source is None:
         db.session.add(SystemSetting(
+            # 空值代表使用程序内置的官方更新源；这里只保存管理员的自定义覆盖值。
             key='update_base_url', value='',
         ))
     db.session.commit()

@@ -1,10 +1,30 @@
 {% extends "base.html" %}
-{% block title %}在线更新{% endblock %}
+{% block title %}系统设置{% endblock %}
 {% block content %}
-<section class="page-heading"><div><div class="eyebrow">ONLINE UPDATE</div><h1>在线更新</h1><p>检查 version.json，下载后校验 SHA256，只覆盖程序文件，不碰数据库、附件、API Key 和备份。</p></div></section>
-<section class="settings-grid"><section class="panel"><div class="eyebrow">UPDATE SOURCE</div><h2>更新源</h2><form method="post" class="stack-form"><label>更新源根地址<input name="update_base_url" value="{{ update_base_url }}" placeholder="https://example.com/campus-eval-update"><small>该目录下应包含 version.json 和对应 zip 包。开源仓库不写死私有地址。</small></label><button class="secondary-button" type="submit">保存更新源</button></form></section>
+<section class="page-heading"><div><div class="eyebrow">SYSTEM SETTINGS</div><h1>系统设置</h1><p>维护学校品牌和系统更新。Logo、数据库、附件及 API Key 都保存在本机，不会被在线更新覆盖。</p></div><button class="secondary-button" id="open-changelog" type="button">查看更新日志</button></section>
+<section class="settings-grid">
+<section class="panel branding-panel"><div class="branding-preview"><div class="brand-mark branding-preview-mark{% if school_logo_url %} has-logo{% endif %}" id="branding-preview-mark">{% if school_logo_url %}<img src="{{ school_logo_url }}" alt="当前学校 Logo" id="branding-preview-image">{% else %}<span id="branding-preview-default">C</span>{% endif %}</div><div><div class="eyebrow">SCHOOL BRAND</div><h2>学校 Logo</h2><p class="lead">上传后替换左侧栏和手机端的默认 C 图标。建议使用清晰的正方形 PNG，也支持 JPG、WEBP、HEIC/HEIF。</p></div></div><form method="post" action="{{ url_for('main.school_logo_settings') }}" enctype="multipart/form-data" class="branding-upload-form"><label>选择 Logo 图片<input type="file" name="logo" id="school-logo-input" accept="image/jpeg,image/png,image/webp,image/heic,image/heif" required></label><div class="button-row"><button class="primary-button" type="submit" name="action" value="upload">上传并使用</button>{% if school_logo_url %}<button class="secondary-button" type="submit" name="action" value="reset" formnovalidate>恢复默认 Logo</button>{% endif %}</div></form></section>
+<section class="panel"><div class="eyebrow">UPDATE SOURCE</div><h2>更新源</h2><div class="official-update-notice"><strong>{{ '当前使用官方更新源' if using_official_update_source else '当前使用自定义更新源' }}</strong><p>不做修改或将输入框留空时，系统会自动使用 CampusMetric 官方更新源，无需复制粘贴地址。</p></div><form method="post" class="stack-form"><label>自定义更新源（可选）<input name="update_base_url" value="{{ update_base_url }}" placeholder="留空使用官方更新源" autocomplete="off"><small>仅在学校需要使用自己的更新服务器时填写；保存空值即可恢复官方更新源。</small></label><button class="secondary-button" type="submit">保存更新源设置</button></form></section>
 <section class="panel"><div class="eyebrow">VERSION STATUS</div><h2>当前版本 {{ update_status.version }}</h2><div class="update-state"><span>运行模式</span><strong>{{ '免安装托管模式' if update_status.managed else '源码开发模式' }}</strong></div><div class="update-state"><span>已暂存更新</span><strong>{{ '是' if update_status.pending else '否' }}</strong></div><div class="button-row update-actions"><button class="primary-button" id="check-update" type="button">检查更新</button><button class="secondary-button" id="download-update" type="button" disabled>下载并校验</button><button class="danger-button" id="apply-update" type="button" {% if not update_status.pending %}disabled{% endif %}>应用更新</button></div><div id="update-result" class="validation-result" hidden></div></section></section>
 <section class="panel security-note"><strong>发布说明</strong><p>项目已附带 <code>scripts/build_update_package.py</code> 和 <code>release/version.example.json</code>，可生成纯代码更新包和清单。源码模式只允许下载暂存，避免运行中覆盖开发目录。</p></section>
+<div class="changelog-modal" id="changelog-modal" hidden>
+  <button class="changelog-backdrop" type="button" aria-label="关闭更新日志"></button>
+  <section class="changelog-dialog" role="dialog" aria-modal="true" aria-labelledby="changelog-title">
+    <header class="changelog-header">
+      <div><div class="eyebrow">RELEASE HISTORY</div><h2 id="changelog-title">历史更新日志</h2><p>记录 CampusMetric 从首个可用版本开始的功能变化。</p></div>
+      <button class="icon-button changelog-close" type="button" aria-label="关闭">×</button>
+    </header>
+    <div class="changelog-list">
+      {% for entry in changelog %}
+      <article class="changelog-entry{% if loop.first %} is-latest{% endif %}">
+        <div class="changelog-entry-meta"><span class="changelog-version">v{{ entry.version }}</span><time>{{ entry.date }}</time>{% if loop.first %}<span class="status-badge status-approved">当前版本</span>{% endif %}</div>
+        <h3>{{ entry.title }}</h3><p>{{ entry.summary }}</p>
+        <ul>{% for item in entry['items'] %}<li>{{ item }}</li>{% endfor %}</ul>
+      </article>
+      {% endfor %}
+    </div>
+  </section>
+</div>
 {% endblock %}
 {% block scripts %}<script>
 const result=document.getElementById('update-result'),download=document.getElementById('download-update'),apply=document.getElementById('apply-update');
@@ -26,4 +46,12 @@ async function call(url){
 }
 document.getElementById('check-update').onclick=async()=>{const d=await call(updateEndpoints.check);download.disabled=!d.ok||!d.newer;if(d.ok&&!d.newer)result.textContent=`当前 ${d.current}，更新源 ${d.latest}，已是最新版。`;};
 download.onclick=async()=>{const d=await call(updateEndpoints.download);if(d.ok)apply.disabled=false;};apply.onclick=()=>call(updateEndpoints.apply);
+const changelogModal=document.getElementById('changelog-modal');
+const closeChangelog=()=>{changelogModal.hidden=true;document.body.classList.remove('modal-open');};
+document.getElementById('open-changelog').onclick=()=>{changelogModal.hidden=false;document.body.classList.add('modal-open');changelogModal.querySelector('.changelog-close').focus();};
+changelogModal.querySelector('.changelog-close').onclick=closeChangelog;
+changelogModal.querySelector('.changelog-backdrop').onclick=closeChangelog;
+document.addEventListener('keydown',event=>{if(event.key==='Escape'&&!changelogModal.hidden)closeChangelog();});
+const logoInput=document.getElementById('school-logo-input'),logoMark=document.getElementById('branding-preview-mark');
+logoInput?.addEventListener('change',()=>{const file=logoInput.files?.[0];if(!file)return;const url=URL.createObjectURL(file);logoMark.classList.add('has-logo');logoMark.innerHTML='';const preview=document.createElement('img');preview.src=url;preview.alt='待上传 Logo 预览';preview.onload=()=>URL.revokeObjectURL(url);logoMark.appendChild(preview);});
 </script>{% endblock %}

@@ -33,9 +33,15 @@
     <form method="post" action="{{ url_for('main.review_record', record_id=row.id) }}" class="review-form">
       <label>审核意见<textarea name="review_note" rows="2" placeholder="通过时可选，退回时必填"></textarea></label>
       <div class="review-actions">
+        <button class="duplicate-check-button" type="button" data-duplicate-check data-url="{{ url_for('main.review_duplicate_check_api', record_id=row.id) }}">快速查重</button>
         <button class="secondary-button" type="submit" name="action" value="reject">退回修改</button>
         <button class="primary-button" type="submit" name="action" value="approve">通过并计分</button>
       </div>
+    </form>
+    {% elif row.status == 'approved' %}
+    <form method="post" action="{{ url_for('main.review_record', record_id=row.id) }}" class="review-form approved-void-form" data-confirm="作废后该记录将不再计分，且仅申请教师可见。确定继续吗？">
+      <label>作废原因<textarea name="review_note" rows="2" required placeholder="例：复核后发现材料或申报信息有误"></textarea></label>
+      <div class="review-actions"><button class="danger-button" type="submit" name="action" value="void">作废该条已通过记录</button></div>
     </form>
     {% endif %}
     </div>
@@ -51,15 +57,89 @@
     <p id="attachment-lightbox-name"></p>
   </div>
 </div>
+<div class="duplicate-modal" id="duplicate-modal" hidden role="dialog" aria-modal="true" aria-labelledby="duplicate-modal-title">
+  <div class="duplicate-modal-card">
+    <button class="duplicate-modal-close" id="duplicate-modal-close" type="button" aria-label="关闭查重结果">×</button>
+    <div class="eyebrow">DUPLICATE CHECK</div>
+    <h2 id="duplicate-modal-title">申报数据查重对比</h2>
+    <p class="lead" id="duplicate-modal-summary"></p>
+    <div class="duplicate-match-tabs" id="duplicate-match-tabs"></div>
+    <div class="duplicate-compare-grid">
+      <section class="duplicate-side current"><div class="duplicate-side-label">本次申请</div><div id="duplicate-current"></div></section>
+      <section class="duplicate-side historical"><div class="duplicate-side-label">已通过记录</div><div id="duplicate-historical"></div></section>
+    </div>
+  </div>
+</div>
 {% endblock %}
 {% block scripts %}<script>
 (() => {
   const lightbox=document.getElementById('attachment-lightbox'),image=document.getElementById('attachment-lightbox-image'),name=document.getElementById('attachment-lightbox-name');
   if(!lightbox)return;
-  const close=()=>{lightbox.hidden=true;image.removeAttribute('src');document.body.style.overflow='';};
-  document.querySelectorAll('[data-attachment-preview]').forEach(button=>button.addEventListener('click',()=>{image.src=button.dataset.imageUrl;image.alt=button.dataset.imageName||'证明材料大图';name.textContent=button.dataset.imageName||'';lightbox.hidden=false;document.body.style.overflow='hidden';}));
+  const close=()=>{lightbox.hidden=true;image.removeAttribute('src');document.body.style.overflow=document.getElementById('duplicate-modal')?.hidden===false?'hidden':'';};
+  document.addEventListener('click',event=>{
+    const button=event.target.closest('[data-attachment-preview]');
+    if(!button)return;
+    image.src=button.dataset.imageUrl;
+    image.alt=button.dataset.imageName||'证明材料大图';
+    name.textContent=button.dataset.imageName||'';
+    lightbox.hidden=false;
+    document.body.style.overflow='hidden';
+  });
   document.getElementById('attachment-lightbox-close').addEventListener('click',close);
   lightbox.addEventListener('click',event=>{if(event.target===lightbox)close();});
   document.addEventListener('keydown',event=>{if(event.key==='Escape'&&!lightbox.hidden)close();});
+})();
+
+(() => {
+  const modal=document.getElementById('duplicate-modal');
+  const closeButton=document.getElementById('duplicate-modal-close');
+  const summary=document.getElementById('duplicate-modal-summary');
+  const tabs=document.getElementById('duplicate-match-tabs');
+  const currentWrap=document.getElementById('duplicate-current');
+  const historicalWrap=document.getElementById('duplicate-historical');
+  if(!modal)return;
+
+  const esc=value=>String(value??'').replace(/[&<>"']/g,char=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[char]));
+  const recordHtml=record=>{
+    const fields=(record.input_fields||[]).map(field=>`<span><small>${esc(field.label)}</small><strong>${esc(field.value)}</strong></span>`).join('')||'<p class="muted-text">无结构化字段</p>';
+    const tracking=record.tracking?`<div class="duplicate-note"><small>${esc(record.tracking_label)}</small><strong>${esc(record.tracking)}</strong></div>`:'';
+    const note=record.note?`<div class="duplicate-note"><small>补充说明</small><p>${esc(record.note)}</p></div>`:'';
+    const attachments=(record.attachments||[]).length?`<div class="duplicate-attachments"><small>证明材料</small><div class="duplicate-attachment-grid">${record.attachments.map(item=>`<button class="duplicate-attachment-preview" type="button" data-attachment-preview data-image-url="${esc(item.url)}" data-image-name="${esc(item.name)}"><img src="${esc(item.url)}" alt="${esc(item.name)}"><span>${esc(item.name)}</span><b>点击查看大图</b></button>`).join('')}</div></div>`:'';
+    return `<div class="duplicate-record-head"><strong>${esc(record.teacher)} · ${esc(record.indicator)}</strong><small>${esc(record.academic_year)} · ${esc(record.created_at)} · ${esc(record.source)}</small></div><div class="duplicate-fields">${fields}</div>${tracking}${note}${attachments}<div class="duplicate-score">得分 <strong>${esc(record.score??'—')}</strong></div>`;
+  };
+  const close=()=>{modal.hidden=true;document.body.style.overflow='';};
+  const showMatch=(payload,index)=>{
+    const match=payload.matches[index];
+    currentWrap.innerHTML=recordHtml(payload.current);
+    historicalWrap.innerHTML=recordHtml(match.record);
+    summary.textContent=`相似度 ${match.similarity}%${match.reasons?.length?`：${match.reasons.join('、')}`:''}`;
+    [...tabs.children].forEach((button,buttonIndex)=>button.classList.toggle('active',buttonIndex===index));
+  };
+
+  document.querySelectorAll('[data-duplicate-check]').forEach(button=>button.addEventListener('click',async()=>{
+    const label=button.textContent;
+    button.disabled=true;button.textContent='正在查重…';
+    try{
+      const response=await fetch(button.dataset.url,{headers:{'Accept':'application/json'}});
+      const payload=await response.json();
+      if(!response.ok||!payload.ok)throw new Error(payload.message||'查重失败');
+      if(!payload.matches.length){window.showToast(payload.message||'未发现相似记录','success');return;}
+      tabs.innerHTML='';
+      payload.matches.forEach((match,index)=>{
+        const tab=document.createElement('button');
+        tab.type='button';tab.textContent=`#${match.record.id} · ${match.similarity}%`;
+        tab.addEventListener('click',()=>showMatch(payload,index));tabs.appendChild(tab);
+      });
+      showMatch(payload,0);modal.hidden=false;document.body.style.overflow='hidden';
+    }catch(error){window.showToast(error.message||'查重请求失败','danger');}
+    finally{button.disabled=false;button.textContent=label;}
+  }));
+  closeButton.addEventListener('click',close);
+  modal.addEventListener('click',event=>{if(event.target===modal)close();});
+  document.addEventListener('keydown',event=>{if(event.key==='Escape'&&!modal.hidden)close();});
+  document.querySelectorAll('.approved-void-form').forEach(form=>form.addEventListener('submit',event=>{
+    if(window.confirm(form.dataset.confirm))return;
+    event.preventDefault();
+  }));
 })();
 </script>{% endblock %}

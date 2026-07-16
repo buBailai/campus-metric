@@ -7,8 +7,8 @@
   <div class="profile-identity"><span class="avatar profile-avatar">{{ current_user.display_name[:1] }}</span><div><h2>{{ current_user.display_name }}</h2><p>@{{ current_user.username }}</p></div></div>
   <dl class="profile-facts">
     <div><dt>账号角色</dt><dd>{{ {'superadmin':'超级管理员','admin':'部门管理员','reviewer':'审核人','teacher':'教师'}.get(current_user.role) }}</dd></div>
-    <div><dt>考评方案</dt><dd>{{ current_user.scheme.name if current_user.scheme else '未指定' }}</dd></div>
-    <div><dt>方案编号</dt><dd><code>{{ current_user.scheme.code if current_user.scheme else '—' }}</code></dd></div>
+    <div><dt>当前方案</dt><dd>{{ active_scheme.name if active_scheme else '未指定' }}</dd></div>
+    <div><dt>可用方案</dt><dd>{% if accessible_schemes %}{% for scheme in accessible_schemes %}<code>{{ scheme.code }}</code>{% if not loop.last %}、{% endif %}{% endfor %}{% else %}—{% endif %}</dd></div>
     <div><dt>身份标记</dt><dd>{{ '班主任 ' if current_user.is_homeroom_teacher else '' }}{{ '年段长' if current_user.is_grade_leader else '' }}{{ '无' if not current_user.is_homeroom_teacher and not current_user.is_grade_leader else '' }}</dd></div>
   </dl>
   <form method="post" action="{{ url_for('auth.logout') }}"><button class="danger-button full" type="submit">退出当前账号</button></form>

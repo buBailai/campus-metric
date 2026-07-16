@@ -1,4 +1,5 @@
 from io import BytesIO
+import re
 
 from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Alignment, Font, PatternFill
@@ -42,7 +43,7 @@ def build_account_template(scheme_codes=None):
     sheet = workbook.active
     sheet.title = '账号导入'
     sheet.append(HEADERS)
-    example_scheme = scheme_codes[0] if scheme_codes else 'SCHEME-001'
+    example_scheme = '、'.join(scheme_codes[:2]) if scheme_codes else 'SCHEME-001'
     sheet.append(['张老师', 'zhanglaoshi', 'T001', '教师', example_scheme, '12345678', '是', '否', 3, '启用'])
 
     header_fill = PatternFill('solid', fgColor='8D68F6')
@@ -73,7 +74,7 @@ def build_account_template(scheme_codes=None):
         ('登录账号', '是', '全系统唯一，建议使用工号或拼音；导入时自动转为小写'),
         ('工号', '否', '填写后必须全系统唯一；含前导零时请按文本填写'),
         ('角色', '是', '教师、审核人或部门管理员'),
-        ('方案编号', '是', '必须与“方案与学年”页面中的方案编号完全一致'),
+        ('方案编号', '是', '可填写一套或多套；多套方案用逗号、顿号或分号分隔，编号必须与“方案与学年”页面完全一致'),
         ('初始密码', '是', '至少 8 个字符'),
         ('班主任', '否', '是/否；仅教师有效，留空默认为是'),
         ('年段长', '否', '是/否；仅教师有效，留空默认为否'),
@@ -140,7 +141,11 @@ def parse_account_workbook(upload, schemes, existing_usernames, existing_employe
         employee_no = _text(value('工号')) or None
         role_text = _text(value('角色')).lower()
         role = ROLE_MAP.get(role_text)
-        scheme_code = _text(value('方案编号'))
+        scheme_code_text = _text(value('方案编号'))
+        scheme_codes = []
+        for code in re.split(r'[,，、;；\s]+', scheme_code_text):
+            if code and code not in scheme_codes:
+                scheme_codes.append(code)
         password = _text(value('初始密码'))
         tenure_text = _text(value('班主任年限'))
 
@@ -154,8 +159,11 @@ def parse_account_workbook(upload, schemes, existing_usernames, existing_employe
             errors.append(f'第{row_number}行工号“{employee_no}”重复')
         if not role:
             errors.append(f'第{row_number}行角色“{_text(value("角色"))}”无效')
-        if scheme_code not in scheme_by_code:
-            errors.append(f'第{row_number}行方案编号“{scheme_code}”不存在')
+        missing_scheme_codes = [code for code in scheme_codes if code not in scheme_by_code]
+        if not scheme_codes:
+            errors.append(f'第{row_number}行缺少方案编号')
+        elif missing_scheme_codes:
+            errors.append(f'第{row_number}行方案编号“{"、".join(missing_scheme_codes)}”不存在')
         if len(password) < 8:
             errors.append(f'第{row_number}行初始密码至少需要 8 个字符')
         try:
@@ -180,7 +188,8 @@ def parse_account_workbook(upload, schemes, existing_usernames, existing_employe
             file_employee_numbers.add(employee_no)
         records.append({
             'display_name': display_name, 'username': username, 'employee_no': employee_no,
-            'role': role, 'scheme_code': scheme_code, 'password': password,
+            'role': role, 'scheme_code': scheme_codes[0] if scheme_codes else '',
+            'scheme_codes': scheme_codes, 'password': password,
             'is_homeroom_teacher': is_homeroom_teacher, 'is_grade_leader': is_grade_leader,
             'tenure_years': tenure_years, 'is_active_flag': is_active,
         })

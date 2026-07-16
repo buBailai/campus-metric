@@ -11,6 +11,7 @@
   <article class="stat-card"><span>已通过</span><strong>{{ totals.approved }}</strong><small>已计入总分</small></article>
   <article class="stat-card"><span>待审核</span><strong>{{ totals.pending }}</strong><small>暂不计分</small></article>
   <article class="stat-card"><span>已退回</span><strong>{{ totals.rejected }}</strong><small>查看退回原因</small></article>
+  <article class="stat-card"><span>已作废</span><strong>{{ totals.voided }}</strong><small>仅本人可见，可删除</small></article>
 </section>
 
 <section class="panel">
@@ -20,17 +21,111 @@
       <thead><tr><th>考评项目</th><th>填报内容</th><th>状态</th><th>得分</th><th>时间</th><th>操作</th></tr></thead>
       <tbody>
       {% for row in rows %}
-        <tr>
+        <tr class="result-record-row" data-record-detail="{{ row.id }}" tabindex="0" aria-label="查看{{ row.indicator }}的完整详情">
           <td data-label="考评项目"><strong>{{ row.indicator }}</strong><small>{{ row.category }}</small></td>
           <td data-label="填报内容">{{ row.inputs }}{% if row.review_note %}<small class="danger-text">审核意见：{{ row.review_note }}</small>{% endif %}</td>
           <td data-label="状态"><span class="status-badge status-{{ row.status }}">{{ row.status_label }}</span></td>
           <td data-label="得分"><strong>{{ row.final_score|score if row.final_score is not none else '—' }}</strong></td>
           <td data-label="时间">{{ row.created_at.strftime('%Y-%m-%d') }}</td>
-          <td data-label="操作">{% if row.can_edit %}<a class="table-action" href="{{ url_for('main.teacher_edit_record_page', record_id=row.id) }}">{{ '修改并重新提交' if row.status == 'rejected' else '编辑待审核填报' }}</a>{% else %}<span class="muted-text">审核通过后只读</span>{% endif %}</td>
+          <td data-label="操作"><div class="record-actions">
+            <button class="table-action-button result-detail-button" type="button" data-record-detail-button="{{ row.id }}">查看详情</button>
+            {% if row.can_edit %}<a class="table-action" href="{{ url_for('main.teacher_edit_record_page', record_id=row.id) }}">{{ '修改并重新提交' if row.status == 'rejected' else '编辑待审核填报' }}</a>{% endif %}
+            {% if row.can_void %}<form method="post" action="{{ url_for('main.void_my_record', record_id=row.id) }}" data-confirm="作废后该记录将仅对你可见，且不再进入审核。确定作废吗？"><button class="table-action-button" type="submit">作废申报</button></form>{% endif %}
+            {% if row.can_delete %}<form method="post" action="{{ url_for('main.delete_my_voided_record', record_id=row.id) }}" data-confirm="删除后将同时删除材料且无法恢复，确定继续吗？"><button class="table-action-button danger" type="submit">删除记录</button></form>{% endif %}
+          </div></td>
         </tr>
       {% else %}<tr><td colspan="6"><div class="empty-state"><h3>还没有考评记录</h3><p>完成首次填报后会显示在这里。</p></div></td></tr>{% endfor %}
       </tbody>
     </table>
   </div>
 </section>
+
+{% for row in rows %}
+<template id="result-detail-template-{{ row.id }}">
+  <div class="archive-modal-title"><div class="eyebrow">{{ row.category }}</div><h2>{{ row.indicator }}</h2></div>
+  <div class="archive-modal-meta">
+    <span>{{ row.scheme_code }} · {{ row.scheme_name }}</span><span>{{ row.academic_year }}</span>
+    <span class="status-badge status-{{ row.status }}">{{ row.status_label }}</span>
+    <span>{{ row.created_at.strftime('%Y-%m-%d %H:%M') }}</span>
+  </div>
+  <div class="result-detail-score-row">
+    <span><small>系统计算</small><strong>{{ row.auto_score|score }} 分</strong></span>
+    <span><small>最终得分</small><strong>{{ row.final_score|score if row.final_score is not none else '暂未计分' }}</strong></span>
+  </div>
+  <section class="result-detail-section">
+    <div class="result-detail-section-title">填报字段</div>
+    <div class="archive-modal-fields">
+      {% for field in row.input_fields %}<span><small>{{ field.label }}</small><strong>{{ field.value }}</strong></span>{% else %}<span><small>填报字段</small><strong>无</strong></span>{% endfor %}
+    </div>
+  </section>
+  {% if row.tracking %}<div class="archive-modal-note result-detail-tracking"><strong>{{ row.tracking_label }}</strong><span class="result-detail-note-body">{{ row.tracking }}</span></div>{% endif %}
+  {% if row.note %}<div class="archive-modal-note"><strong>补充说明</strong><span class="result-detail-note-body">{{ row.note }}</span></div>{% endif %}
+  {% if row.review_note %}<div class="archive-modal-note result-detail-review-note"><strong>审核意见</strong><span class="result-detail-note-body">{{ row.review_note }}</span></div>{% endif %}
+  <section class="result-detail-section">
+    <div class="result-detail-section-title">证明材料</div>
+    {% if row.attachments %}<div class="result-detail-attachments">{% for attachment in row.attachments %}{% set image_url = url_for('main.view_attachment', attachment_id=attachment.id) %}<button class="result-detail-attachment" type="button" data-result-attachment data-image-url="{{ image_url }}" data-image-name="{{ attachment.name|e }}"><img src="{{ image_url }}" alt="{{ attachment.name }}"><span>{{ attachment.name }}</span><b>点击查看大图</b></button>{% endfor %}</div>{% else %}<p class="muted-text result-detail-empty">本条记录未上传证明材料。</p>{% endif %}
+  </section>
+</template>
+{% endfor %}
+
+<div class="archive-modal result-detail-modal" id="result-detail-modal" hidden role="dialog" aria-modal="true" aria-label="考评记录详情">
+  <article class="archive-modal-card"><button class="archive-modal-close" id="result-detail-close" type="button" aria-label="关闭详情">×</button><div id="result-detail-content"></div></article>
+</div>
+<div class="attachment-lightbox" id="result-attachment-lightbox" hidden role="dialog" aria-modal="true" aria-label="证明材料预览">
+  <div class="attachment-lightbox-card"><button class="attachment-lightbox-close" id="result-attachment-close" type="button" aria-label="关闭预览">×</button><img id="result-attachment-image" alt="证明材料大图"><p id="result-attachment-name"></p></div>
+</div>
 {% endblock %}
+{% block scripts %}<script>
+(() => {
+  document.querySelectorAll('form[data-confirm]').forEach(form=>form.addEventListener('submit',event=>{
+    if(window.confirm(form.dataset.confirm))return;
+    event.preventDefault();
+  }));
+
+  const detailModal=document.getElementById('result-detail-modal');
+  const detailContent=document.getElementById('result-detail-content');
+  const imageModal=document.getElementById('result-attachment-lightbox');
+  const image=document.getElementById('result-attachment-image');
+  const imageName=document.getElementById('result-attachment-name');
+  if(!detailModal||!imageModal)return;
+
+  const syncLock=()=>document.body.classList.toggle('modal-open',!detailModal.hidden||!imageModal.hidden);
+  const openDetail=id=>{
+    const template=document.getElementById(`result-detail-template-${id}`);
+    if(!template)return;
+    detailContent.replaceChildren(template.content.cloneNode(true));
+    detailModal.hidden=false;
+    syncLock();
+    document.getElementById('result-detail-close').focus();
+  };
+  const closeDetail=()=>{detailModal.hidden=true;detailContent.replaceChildren();syncLock();};
+  const openImage=button=>{
+    image.src=button.dataset.imageUrl;
+    image.alt=button.dataset.imageName||'证明材料大图';
+    imageName.textContent=button.dataset.imageName||'';
+    imageModal.hidden=false;
+    syncLock();
+  };
+  const closeImage=()=>{imageModal.hidden=true;image.removeAttribute('src');syncLock();};
+
+  document.addEventListener('click',event=>{
+    const attachment=event.target.closest('[data-result-attachment]');
+    if(attachment){openImage(attachment);return;}
+    const button=event.target.closest('[data-record-detail-button]');
+    if(button){openDetail(button.dataset.recordDetailButton);return;}
+    const row=event.target.closest('tr[data-record-detail]');
+    if(row&&!event.target.closest('a,button,form,input,textarea,select'))openDetail(row.dataset.recordDetail);
+  });
+  document.querySelectorAll('tr[data-record-detail]').forEach(row=>row.addEventListener('keydown',event=>{
+    if((event.key==='Enter'||event.key===' ')&&event.target===row){event.preventDefault();openDetail(row.dataset.recordDetail);}
+  }));
+  document.getElementById('result-detail-close').addEventListener('click',closeDetail);
+  document.getElementById('result-attachment-close').addEventListener('click',closeImage);
+  detailModal.addEventListener('click',event=>{if(event.target===detailModal)closeDetail();});
+  imageModal.addEventListener('click',event=>{if(event.target===imageModal)closeImage();});
+  document.addEventListener('keydown',event=>{
+    if(event.key!=='Escape')return;
+    if(!imageModal.hidden)closeImage();else if(!detailModal.hidden)closeDetail();
+  });
+})();
+</script>{% endblock %}

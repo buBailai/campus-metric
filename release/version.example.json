@@ -1,8 +1,8 @@
 {
-  "version": "0.3.0",
-  "zip": "campus-evaluation-update-0.3.0.zip",
+  "version": "0.3.7",
+  "zip": "campus-evaluation-update-0.3.7.zip",
   "sha256": "打包后填写SHA256",
   "size": 0,
-  "notes": "更新说明",
+  "notes": "由 evaluation_app/changelog.py 自动生成",
   "min_from": "0.1.0"
 }

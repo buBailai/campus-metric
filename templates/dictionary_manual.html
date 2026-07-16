@@ -1,7 +1,30 @@
 {% extends "base.html" %}
+{% macro config_editors(rule_json, tracking_json, locked=false) %}
+<div class="visual-config-editor" data-config-editor data-locked="{{ 'true' if locked else 'false' }}">
+  {% if locked %}<div class="config-lock-note"><span>🔒</span><div><strong>计分口径已锁定</strong><small>该指标已经产生考评记录。为保护历史分数，积分类型、计分规则和二级跟踪字段不能再修改。</small></div></div>{% endif %}
+  <section class="config-builder-section">
+    <div class="config-builder-head"><div><span class="config-step">01</span><strong>计分规则</strong><small>根据积分类型自动显示对应控件</small></div><span class="sync-badge">图形与 JSON 同步</span></div>
+    <div class="rule-visual-fields" data-rule-fields></div>
+    <details class="advanced-json-panel" data-rule-advanced>
+      <summary><span>高级编辑：计分规则 JSON</span><small>适合熟悉字典结构的用户</small></summary>
+      <label>计分规则 JSON<textarea name="scoring_rule" rows="7" class="code-input" data-rule-json required {% if locked %}disabled{% endif %}>{{ rule_json }}</textarea></label>
+      <div class="json-sync-status" data-rule-status></div>
+    </details>
+  </section>
+  <section class="config-builder-section tracking-builder-section">
+    <div class="config-builder-head"><div><span class="config-step">02</span><strong>二级跟踪字段</strong><small>例如班级、年段或项目组</small></div><span class="sync-badge">可选</span></div>
+    <div class="tracking-visual-fields" data-tracking-fields></div>
+    <details class="advanced-json-panel" data-tracking-advanced>
+      <summary><span>高级编辑：二级跟踪 JSON</span><small>直接修改后会反向刷新上方控件</small></summary>
+      <label>二级跟踪 JSON<textarea name="secondary_tracking" rows="5" class="code-input" data-tracking-json {% if locked %}disabled{% endif %}>{{ tracking_json }}</textarea></label>
+      <div class="json-sync-status" data-tracking-status></div>
+    </details>
+  </section>
+</div>
+{% endmacro %}
 {% block title %}手动配置字典{% endblock %}
 {% block content %}
-<section class="page-heading"><div><div class="eyebrow">MANUAL DICTIONARY</div><h1>手动配置</h1><p>适合少量调整；大量指标仍建议使用 AI 生成 JSON 后导入。</p></div><a class="secondary-button" href="{{ url_for('main.dictionary_page') }}">返回 JSON 导入</a></section>
+<section class="page-heading"><div><div class="eyebrow">MANUAL DICTIONARY</div><h1>手动配置</h1><p>常用规则可直接用图形控件编辑；高级用户仍可展开 JSON，并与图形界面实时同步。</p></div><a class="secondary-button" href="{{ url_for('main.dictionary_page') }}">返回 JSON 导入</a></section>
 
 <section class="manual-grid">
   <aside class="panel">
@@ -14,14 +37,13 @@
       <button class="primary-button" type="submit">新增一级指标</button>
     </form>
   </aside>
-  <section class="panel">
+  <section class="panel new-indicator-panel">
     <div class="eyebrow">NEW INDICATOR</div><h2>新增考评明细</h2>
-    <form method="post" action="{{ url_for('main.create_indicator') }}" class="stack-form compact-form">
+    <form method="post" action="{{ url_for('main.create_indicator') }}" class="stack-form compact-form" data-indicator-config-form>
       <label>所属一级指标<select name="category_id" required>{% for category in categories %}<option value="{{ category.id }}">{{ category.name }}</option>{% endfor %}</select></label>
-      <div class="inline-options"><label>编码<input name="code" required></label><label>名称<input name="name" required></label></div>
-      <div class="form-grid-3"><label>数据来源<select name="data_source"><option value="admin">管理员录入</option><option value="teacher">教师填报</option><option value="excel">外部导入</option></select></label><label>分数分组<select name="score_group"><option value="base">基础分</option><option value="bonus">加分</option><option value="deduction">扣分</option></select></label><label>积分类型<select name="scoring_type"><option value="manual_score">直接给分</option><option value="fixed_score">固定分</option><option value="tiered_score">分档计分</option><option value="count_score">次数加分</option><option value="count_deduction">次数扣分</option><option value="range_score">区间计分</option><option value="matrix_score">二维查表</option><option value="tenure_score">年限分档</option><option value="fixed_bonus">固定加分</option></select></label></div>
-      <label>计分规则 JSON<textarea name="scoring_rule" rows="5" class="code-input" required>{"min_score": 0, "max_score": 5}</textarea></label>
-      <label>二级跟踪字段 JSON<textarea name="secondary_tracking" rows="3" class="code-input">{"enabled": false}</textarea></label>
+      <div class="inline-options"><label>编码<input name="code" required placeholder="student_award"></label><label>名称<input name="name" required placeholder="学生获奖"></label></div>
+      <div class="form-grid-3"><label>数据来源<select name="data_source"><option value="admin">管理员录入</option><option value="teacher">教师填报</option><option value="excel">外部导入</option></select></label><label>分数分组<select name="score_group"><option value="base">基础分</option><option value="bonus">加分</option><option value="deduction">扣分</option></select></label><label>积分类型<select name="scoring_type" data-scoring-type><option value="manual_score">直接给分</option><option value="fixed_score">固定分</option><option value="tiered_score">分档计分</option><option value="count_score">次数加分</option><option value="count_deduction">次数扣分</option><option value="range_score">区间计分</option><option value="matrix_score">二维查表</option><option value="tenure_score">年限分档</option><option value="fixed_bonus">固定加分</option></select></label></div>
+      {{ config_editors('{"min_score": 0, "max_score": 5}', '{"enabled": false}') }}
       <label>说明<textarea name="description" rows="2"></textarea></label>
       <div class="check-grid"><label class="check-row"><input type="checkbox" name="allow_multiple_records">允许多条</label><label class="check-row"><input type="checkbox" name="requires_evidence">需上传材料</label><label class="check-row"><input type="checkbox" name="ai_enabled">AI 识别</label></div>
       <button class="primary-button" type="submit" {% if not categories %}disabled{% endif %}>新增考评明细</button>
@@ -36,17 +58,17 @@
     <div class="manual-category-editor">
       <form method="post" action="{{ url_for('main.update_category', category_id=category.id) }}" class="inline-edit-form"><input name="name" value="{{ category.name }}"><input name="sort_order" type="number" value="{{ category.sort_order }}"><input name="max_score" type="number" step="0.1" value="{{ category.max_score if category.max_score is not none else '' }}"><button class="secondary-button" name="action" value="save">保存</button><button class="link-danger" name="action" value="delete">删除</button></form>
       {% for item in category.indicators %}
+      {% set locked = item.id in locked_indicator_ids %}
       <details class="manual-item-editor" id="indicator-{{ item.id }}" {% if request.args.get('indicator_id', '')|int == item.id %}open{% endif %}><summary><span><strong>{{ item.name }}</strong><small>{{ item.code }} · {{ item.data_source }} · {{ item.scoring_type }}</small></span><span>编辑</span></summary>
-        <form method="post" action="{{ url_for('main.update_indicator', indicator_id=item.id) }}" class="stack-form compact-form">
+        <form method="post" action="{{ url_for('main.update_indicator', indicator_id=item.id) }}" class="stack-form compact-form" data-indicator-config-form>
           <input type="hidden" name="code" value="{{ item.code }}">
           <div class="inline-options"><label>名称<input name="name" value="{{ item.name }}"></label><label>排序<input name="sort_order" type="number" value="{{ item.sort_order }}"></label></div>
           <label>说明<textarea name="description" rows="2">{{ item.description }}</textarea></label>
-          <div class="form-grid-3"><label>数据来源<select name="data_source"><option value="admin" {% if item.data_source == 'admin' %}selected{% endif %}>管理员</option><option value="teacher" {% if item.data_source == 'teacher' %}selected{% endif %}>教师</option><option value="excel" {% if item.data_source == 'excel' %}selected{% endif %}>外部导入</option></select></label><label>分数分组<select name="score_group"><option value="base" {% if item.score_group == 'base' %}selected{% endif %}>基础分</option><option value="bonus" {% if item.score_group == 'bonus' %}selected{% endif %}>加分</option><option value="deduction" {% if item.score_group == 'deduction' %}selected{% endif %}>扣分</option></select></label><label>积分类型<select name="scoring_type">{% for value,label in [('manual_score','直接给分'),('fixed_score','固定分'),('tiered_score','分档计分'),('count_score','次数加分'),('count_deduction','次数扣分'),('range_score','区间计分'),('matrix_score','二维查表'),('tenure_score','年限分档'),('fixed_bonus','固定加分')] %}<option value="{{ value }}" {% if item.scoring_type == value %}selected{% endif %}>{{ label }}</option>{% endfor %}</select></label></div>
-          <label>计分规则 JSON<textarea name="scoring_rule" rows="4" class="code-input">{{ item.scoring_rule_json }}</textarea></label>
-          <label>二级跟踪 JSON<textarea name="secondary_tracking" rows="3" class="code-input">{{ item.secondary_tracking_json }}</textarea></label>
-          <div class="check-grid"><label class="check-row"><input type="checkbox" name="enabled" {% if item.enabled %}checked{% endif %}>启用</label><label class="check-row"><input type="checkbox" name="allow_multiple_records" {% if item.allow_multiple_records %}checked{% endif %}>多条</label><label class="check-row"><input type="checkbox" name="requires_evidence" {% if item.requires_evidence %}checked{% endif %}>材料</label><label class="check-row"><input type="checkbox" name="ai_enabled" {% if item.ai_enabled %}checked{% endif %}>AI</label></div>
+          <div class="form-grid-3"><label>数据来源<select name="data_source" {% if locked %}disabled{% endif %}><option value="admin" {% if item.data_source == 'admin' %}selected{% endif %}>管理员</option><option value="teacher" {% if item.data_source == 'teacher' %}selected{% endif %}>教师</option><option value="excel" {% if item.data_source == 'excel' %}selected{% endif %}>外部导入</option></select></label><label>分数分组<select name="score_group" {% if locked %}disabled{% endif %}><option value="base" {% if item.score_group == 'base' %}selected{% endif %}>基础分</option><option value="bonus" {% if item.score_group == 'bonus' %}selected{% endif %}>加分</option><option value="deduction" {% if item.score_group == 'deduction' %}selected{% endif %}>扣分</option></select></label><label>积分类型<select name="scoring_type" data-scoring-type {% if locked %}disabled{% endif %}>{% for value,label in [('manual_score','直接给分'),('fixed_score','固定分'),('tiered_score','分档计分'),('count_score','次数加分'),('count_deduction','次数扣分'),('range_score','区间计分'),('matrix_score','二维查表'),('tenure_score','年限分档'),('fixed_bonus','固定加分')] %}<option value="{{ value }}" {% if item.scoring_type == value %}selected{% endif %}>{{ label }}</option>{% endfor %}</select></label></div>
+          {{ config_editors(item.scoring_rule_json, item.secondary_tracking_json, locked) }}
+          <div class="check-grid"><label class="check-row"><input type="checkbox" name="enabled" {% if item.enabled %}checked{% endif %}>启用</label><label class="check-row"><input type="checkbox" name="allow_multiple_records" {% if item.allow_multiple_records %}checked{% endif %} {% if locked %}disabled{% endif %}>多条</label><label class="check-row"><input type="checkbox" name="requires_evidence" {% if item.requires_evidence %}checked{% endif %}>材料</label><label class="check-row"><input type="checkbox" name="ai_enabled" {% if item.ai_enabled %}checked{% endif %}>AI</label></div>
           <div class="button-row"><button class="secondary-button" name="action" value="save">保存明细</button><button class="link-danger" name="action" value="delete">删除明细</button></div>
-          <small class="edit-rule-note">如果该指标已经产生考评记录，为保护历史计算口径，系统只保存名称、说明、排序、启停和材料设置，不修改积分类型及计分规则。</small>
+          {% if locked %}<small class="edit-rule-note">该指标已有数据，本次只保存名称、说明、排序、启停和材料设置。</small>{% endif %}
         </form>
       </details>
       {% endfor %}
@@ -55,3 +77,4 @@
   {% else %}<div class="empty-state"><h3>还没有一级指标</h3><p>请先在上方新增分类。</p></div>{% endfor %}
 </section>
 {% endblock %}
+{% block scripts %}<script src="{{ url_for('static', filename='js/rule-editor.js', v='20260716-v036') }}"></script>{% endblock %}

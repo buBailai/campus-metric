@@ -5,6 +5,7 @@
   <div><div class="eyebrow">DICTIONARY · {{ year.name if year else '' }}</div><h1>考评字典</h1><p>手动维护，或让 AI 按模板生成 JSON 后一次导入。</p></div>
   <div class="button-row">
     <a class="primary-button" href="{{ url_for('main.dictionary_manual_page') }}">手动配置</a>
+    {% if dictionary and dictionary['categories'] %}<a class="secondary-button" href="{{ url_for('main.dictionary_download', kind='current') }}">导出考评字典（备份 / 分享）</a>{% endif %}
     <a class="secondary-button" href="{{ url_for('main.dictionary_download', kind='blank') }}">下载空白模板</a>
     <a class="secondary-button" href="{{ url_for('main.dictionary_download', kind='example') }}">下载完整示例</a>
     <a class="secondary-button" href="{{ url_for('main.dictionary_guide') }}">字段说明</a>

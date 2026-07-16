@@ -11,6 +11,13 @@ import requests
 from .version import APP_VERSION
 
 
+OFFICIAL_UPDATE_BASE_URL = 'http://bubailai.top/campus-evaluation/updates'
+
+
+def effective_update_base_url(custom_url=''):
+    return str(custom_url or '').strip().rstrip('/') or OFFICIAL_UPDATE_BASE_URL
+
+
 DATA_EXCLUDE = (
     'instance/', 'uploads/', 'backups/', '.env', '.venv/', 'env/', '.git/',
     '__pycache__/', 'release/',

@@ -1,12 +1,12 @@
 {% extends "base.html" %}
 {% block title %}账号管理{% endblock %}
 {% block content %}
-<section class="page-heading"><div><div class="eyebrow">SUPERADMIN · ACCOUNTS</div><h1>账号管理</h1><p>仅超级管理员可创建和维护部门管理员、审核人及教师账号，并明确账号默认所属方案。</p></div></section>
+<section class="page-heading"><div><div class="eyebrow">SUPERADMIN · ACCOUNTS</div><h1>账号管理</h1><p>仅超级管理员可创建和维护部门管理员、审核人及教师账号，并为每个账号分配一套或多套可用方案。</p></div></section>
 
 <section class="panel account-import-panel">
   <div>
     <div class="eyebrow">BULK IMPORT</div><h2>批量导入账号</h2>
-    <p class="lead">下载模板后填写账号、角色和方案编号。系统会先校验整张表，全部通过后才一次性写入，已有账号不会被覆盖。</p>
+    <p class="lead">下载模板后填写账号、角色和方案编号；同一账号可用逗号或顿号填写多套方案。系统会先校验整张表，全部通过后才一次性写入。</p>
     <div class="button-row"><a class="secondary-button" href="{{ url_for('main.account_import_template') }}">下载 Excel 模板</a></div>
   </div>
   <form method="post" action="{{ url_for('main.import_accounts') }}" enctype="multipart/form-data" class="account-import-form">
@@ -18,12 +18,12 @@
 <section class="account-layout">
   <aside class="panel account-create">
     <div class="eyebrow">NEW ACCOUNT</div><h2>新建账号</h2>
-    <form method="post" class="stack-form compact-form">
+    <form method="post" class="stack-form compact-form scheme-assignment-form">
       <label>姓名<input name="display_name" required placeholder="例：张老师"></label>
       <label>登录账号<input name="username" required autocomplete="off" placeholder="建议使用工号或拼音"></label>
       <label>工号（可选）<input name="employee_no"></label>
       <label>账号角色<select name="role"><option value="teacher">教师</option><option value="reviewer">审核人</option><option value="admin">管理员</option></select></label>
-      <label>默认所属方案<select name="scheme_id">{% for scheme in schemes %}<option value="{{ scheme.id }}">{{ scheme.code }} · {{ scheme.name }}</option>{% endfor %}</select></label>
+      <fieldset class="scheme-assignment"><legend>可用考评方案 <small>可多选，登录后可在右上角切换</small></legend><div class="scheme-choice-grid">{% for scheme in schemes %}<label class="scheme-choice"><input type="checkbox" name="scheme_ids" value="{{ scheme.id }}" {% if loop.first %}checked{% endif %}><span><strong>{{ scheme.code }}</strong><small>{{ scheme.name }}{% if scheme.status == 'archived' %} · 已归档{% endif %}</small></span></label>{% endfor %}</div></fieldset>
       <label>初始密码<input name="password" type="password" minlength="8" required autocomplete="new-password"></label>
       <label class="check-row"><input type="checkbox" name="is_homeroom_teacher" checked>班主任</label>
       <label class="check-row"><input type="checkbox" name="is_grade_leader">年段长</label>
@@ -37,23 +37,72 @@
       {% for user in users %}
       <article class="user-row">
         <span class="avatar">{{ user.display_name[:1] }}</span>
-        <div class="user-main"><strong>{{ user.display_name }}</strong><small>@{{ user.username }}{% if user.employee_no %} · {{ user.employee_no }}{% endif %}</small></div>
+        {% set membership_ids = user.scheme_memberships|map(attribute='scheme_id')|list %}
+        <div class="user-main"><strong>{{ user.display_name }}</strong><small>@{{ user.username }}{% if user.employee_no %} · {{ user.employee_no }}{% endif %}</small>{% if user.role != 'superadmin' %}<small class="assigned-schemes">方案：{% for scheme in schemes if scheme.id in membership_ids or scheme.id == user.scheme_id %}{{ scheme.code }}{% if not loop.last %}、{% endif %}{% endfor %}</small>{% endif %}</div>
         <span class="badge {% if user.role in ['superadmin', 'admin'] %}warm{% endif %}">{{ {'superadmin':'超级管理员','admin':'部门管理员','reviewer':'审核人','teacher':'教师'}.get(user.role) }}</span>
         <span class="status-badge status-{{ 'approved' if user.is_active_flag else 'rejected' }}">{{ '启用' if user.is_active_flag else '停用' }}</span>
         <details class="row-menu">
-          <summary>···</summary>
-          <div>{% if user.role != 'superadmin' %}
-            <form method="post" action="{{ url_for('main.update_user_profile', user_id=user.id) }}">
-              <select name="role"><option value="teacher" {% if user.role == 'teacher' %}selected{% endif %}>教师</option><option value="reviewer" {% if user.role == 'reviewer' %}selected{% endif %}>审核人</option><option value="admin" {% if user.role == 'admin' %}selected{% endif %}>管理员</option></select>
-              <select name="scheme_id">{% for scheme in schemes %}<option value="{{ scheme.id }}" {% if user.scheme_id == scheme.id %}selected{% endif %}>{{ scheme.code }} · {{ scheme.name }}</option>{% endfor %}</select>
-              <input name="tenure_years" type="number" min="0" value="{{ user.tenure_years }}" placeholder="班主任年限">
-              <label class="check-row"><input type="checkbox" name="is_homeroom_teacher" {% if user.is_homeroom_teacher %}checked{% endif %}>班主任</label>
-              <label class="check-row"><input type="checkbox" name="is_grade_leader" {% if user.is_grade_leader %}checked{% endif %}>年段长</label>
-              <button type="submit">保存角色与标记</button>
+          <summary aria-label="编辑 {{ user.display_name }} 的账号">···</summary>
+          <div class="account-editor">
+            <header class="account-editor-head">
+              <div>
+                <span class="editor-kicker">ACCOUNT SETTINGS</span>
+                <strong>编辑账号</strong>
+                <small>{{ user.display_name }} · @{{ user.username }}</small>
+              </div>
+              <button class="account-editor-close" type="button" aria-label="关闭账号编辑">×</button>
+            </header>
+
+            {% if user.role != 'superadmin' %}
+            <form method="post" action="{{ url_for('main.update_user_profile', user_id=user.id) }}" class="scheme-assignment-form account-profile-form">
+              <section class="account-editor-section">
+                <div class="editor-section-heading">
+                  <span>01</span>
+                  <div><strong>账号权限</strong><small>设置角色及可以参与的考评方案</small></div>
+                </div>
+                <label class="editor-field">账号角色
+                  <select name="role"><option value="teacher" {% if user.role == 'teacher' %}selected{% endif %}>教师</option><option value="reviewer" {% if user.role == 'reviewer' %}selected{% endif %}>审核人</option><option value="admin" {% if user.role == 'admin' %}selected{% endif %}>部门管理员</option></select>
+                </label>
+                <fieldset class="scheme-assignment compact"><legend>可用考评方案 <small>可多选，用户登录后可以切换</small></legend><div class="scheme-choice-grid">{% for scheme in schemes %}<label class="scheme-choice"><input type="checkbox" name="scheme_ids" value="{{ scheme.id }}" {% if scheme.id in membership_ids or scheme.id == user.scheme_id %}checked{% endif %}><span><strong>{{ scheme.code }}</strong><small>{{ scheme.name }}{% if scheme.status == 'archived' %} · 已归档{% endif %}</small></span></label>{% endfor %}</div></fieldset>
+              </section>
+
+              <section class="account-editor-section teacher-only-fields" data-teacher-fields {% if user.role != 'teacher' %}hidden{% endif %}>
+                <div class="editor-section-heading">
+                  <span>02</span>
+                  <div><strong>教师身份</strong><small>仅教师角色使用的任职信息</small></div>
+                </div>
+                <label class="editor-field">班主任任职年限（年）
+                  <input name="tenure_years" type="number" min="0" step="1" inputmode="numeric" value="{{ user.tenure_years }}" placeholder="例：3">
+                  <small class="editor-field-help">用于按班主任任职年限计分的指标；填写 0 表示暂无任职年限。</small>
+                </label>
+                <div class="identity-choice-grid">
+                  <label class="identity-choice"><input type="checkbox" name="is_homeroom_teacher" {% if user.is_homeroom_teacher %}checked{% endif %}><span><strong>班主任</strong><small>标记为当前班主任</small></span></label>
+                  <label class="identity-choice"><input type="checkbox" name="is_grade_leader" {% if user.is_grade_leader %}checked{% endif %}><span><strong>年段长</strong><small>标记为当前年段长</small></span></label>
+                </div>
+              </section>
+              <button class="primary-button full account-save-button" type="submit">保存账号设置</button>
             </form>
-            <form method="post" action="{{ url_for('main.toggle_user', user_id=user.id) }}"><button type="submit">{{ '停用账号' if user.is_active_flag else '启用账号' }}</button></form>
             {% endif %}
-            <form method="post" action="{{ url_for('main.reset_user_password', user_id=user.id) }}"><input name="password" type="password" minlength="8" required placeholder="输入新密码"><button type="submit">重置密码</button></form>
+
+            <section class="account-editor-section account-security-section">
+              <div class="editor-section-heading">
+                <span>{% if user.role == 'superadmin' %}01{% else %}03{% endif %}</span>
+                <div><strong>账号安全</strong><small>管理登录状态与重置密码</small></div>
+              </div>
+              {% if user.role != 'superadmin' %}
+              <div class="account-status-control">
+                <div><strong>登录状态</strong><small>{{ '账号当前可以正常登录系统' if user.is_active_flag else '账号当前已被禁止登录' }}</small></div>
+                <form method="post" action="{{ url_for('main.toggle_user', user_id=user.id) }}"><button class="{{ 'editor-danger-button' if user.is_active_flag else 'editor-enable-button' }}" type="submit">{{ '停用账号' if user.is_active_flag else '启用账号' }}</button></form>
+              </div>
+              {% endif %}
+              <form method="post" action="{{ url_for('main.reset_user_password', user_id=user.id) }}" class="account-password-form">
+                <label class="editor-field">设置新密码
+                  <input name="password" type="password" minlength="8" required autocomplete="new-password" placeholder="请输入至少 8 位的新密码">
+                  <small class="editor-field-help">保存后，用户下次登录须使用新密码。</small>
+                </label>
+                <button class="secondary-button full" type="submit">确认重置密码</button>
+              </form>
+            </section>
           </div>
         </details>
       </article>
@@ -62,3 +111,27 @@
   </section>
 </section>
 {% endblock %}
+{% block scripts %}<script>
+document.querySelectorAll('.scheme-assignment-form').forEach(form => form.addEventListener('submit', event => {
+  if (form.querySelectorAll('input[name="scheme_ids"]:checked').length) return;
+  event.preventDefault();
+  window.showToast('请至少选择一套可用考评方案', 'danger');
+  form.querySelector('.scheme-assignment')?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+}));
+document.querySelectorAll('.account-profile-form').forEach(form => {
+  const role = form.querySelector('select[name="role"]');
+  const teacherFields = form.querySelector('[data-teacher-fields]');
+  const syncTeacherFields = () => { teacherFields.hidden = role.value !== 'teacher'; };
+  role.addEventListener('change', syncTeacherFields);
+  syncTeacherFields();
+});
+document.querySelectorAll('.row-menu').forEach(menu => {
+  menu.addEventListener('toggle', () => {
+    if (!menu.open) return;
+    document.querySelectorAll('.row-menu[open]').forEach(other => {
+      if (other !== menu) other.removeAttribute('open');
+    });
+  });
+  menu.querySelector('.account-editor-close')?.addEventListener('click', () => menu.removeAttribute('open'));
+});
+</script>{% endblock %}

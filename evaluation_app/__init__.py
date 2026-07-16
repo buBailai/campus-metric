@@ -7,7 +7,7 @@ _vendor_dir = Path(__file__).resolve().parent.parent / 'vendor'
 if _vendor_dir.is_dir() and str(_vendor_dir) not in sys.path:
     sys.path.insert(0, str(_vendor_dir))
 
-from flask import Flask
+from flask import Flask, url_for
 from flask_login import LoginManager
 from flask_sqlalchemy import SQLAlchemy
 
@@ -45,7 +45,7 @@ def create_app(test_config=None):
     login_manager.login_view = 'auth.login'
     login_manager.login_message = '请先登录系统。'
 
-    from .models import AcademicYear, EvaluationScheme, SchemeMembership, User
+    from .models import AcademicYear, EvaluationScheme, SchemeMembership, SystemSetting, User
 
     @login_manager.user_loader
     def load_user(user_id):
@@ -67,7 +67,17 @@ def create_app(test_config=None):
                 member_ids = db.session.query(SchemeMembership.scheme_id).filter_by(user_id=current_user.id)
                 query = query.filter(db.or_(EvaluationScheme.id.in_(member_ids), EvaluationScheme.id == current_user.scheme_id))
             schemes = query.order_by(EvaluationScheme.id).all()
-        return {'active_year': year, 'active_scheme': scheme, 'accessible_schemes': schemes}
+        school_logo_url = None
+        logo_setting = db.session.get(SystemSetting, 'school_logo_path')
+        logo_path = Path(app.config['UPLOAD_FOLDER']) / 'system' / 'school-logo.png'
+        if logo_setting and logo_setting.value == 'system/school-logo.png' and logo_path.is_file():
+            school_logo_url = url_for('main.school_logo_asset', v=logo_path.stat().st_mtime_ns)
+        return {
+            'active_year': year,
+            'active_scheme': scheme,
+            'accessible_schemes': schemes,
+            'school_logo_url': school_logo_url,
+        }
 
     @app.template_filter('score')
     def format_score(value):

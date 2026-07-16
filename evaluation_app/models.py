@@ -200,6 +200,7 @@ class AIModelSetting(db.Model):
     __tablename__ = 'ai_model_setting'
 
     id = db.Column(db.Integer, primary_key=True)
+    purpose = db.Column(db.String(30), nullable=False, default='reasoning')
     provider = db.Column(db.String(50), nullable=False, default='custom')
     api_base = db.Column(db.String(500), nullable=False, default='')
     api_key = db.Column(db.String(500), nullable=False, default='')

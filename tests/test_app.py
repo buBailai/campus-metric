@@ -16,7 +16,7 @@ from evaluation_app.dictionary_service import (
 )
 from evaluation_app.models import (
     AIModelSetting, AcademicYear, AuditLog, Category, EvaluationRecord, EvaluationScheme, Indicator,
-    SchemeMembership, User,
+    RecordAttachment, SchemeMembership, SystemSetting, User,
 )
 from evaluation_app.update_service import apply_staged_update
 
@@ -158,6 +158,119 @@ class RouteTests(unittest.TestCase):
         self.assertIn('导入未写入任何账号'.encode(), response.data)
         self.assertIsNone(User.query.filter_by(username='teacher03').first())
 
+    def test_system_settings_logo_and_dual_ai_models(self):
+        self.client.post('/setup', data={
+            'username': 'admin', 'display_name': '管理员',
+            'password': 'password123', 'academic_year': '2026—2027学年',
+        })
+        legacy_ai = AIModelSetting(
+            purpose='reasoning', provider='custom', api_base='https://legacy.example.test/v1',
+            api_key='legacy-key', model_name='legacy-model', enabled=True,
+        )
+        db.session.add(legacy_ai)
+        db.session.commit()
+        from evaluation_app.migrations import run_compatibility_migrations
+        run_compatibility_migrations()
+        migrated_vision = AIModelSetting.query.filter_by(purpose='vision').one()
+        self.assertEqual(migrated_vision.model_name, 'legacy-model')
+        self.assertEqual(migrated_vision.api_key, 'legacy-key')
+
+        settings_page = self.client.get('/admin/settings/update')
+        self.assertEqual(settings_page.status_code, 200)
+        self.assertIn('系统设置'.encode(), settings_page.data)
+        self.assertIn('学校 Logo'.encode(), settings_page.data)
+        self.assertIn('在线更新'.encode(), settings_page.data)
+        self.assertIn('当前使用官方更新源'.encode(), settings_page.data)
+        self.assertIn('留空使用官方更新源'.encode(), settings_page.data)
+        from evaluation_app.update_service import OFFICIAL_UPDATE_BASE_URL, effective_update_base_url
+        self.assertEqual(effective_update_base_url(''), OFFICIAL_UPDATE_BASE_URL)
+        self.assertNotIn(OFFICIAL_UPDATE_BASE_URL.encode(), settings_page.data)
+        self.assertEqual(db.session.get(SystemSetting, 'update_base_url').value, '')
+
+        manifest = {
+            'version': '0.3.7', 'zip': 'campus-evaluation-update-0.3.7.zip',
+            'sha256': '0' * 64, 'size': 1,
+        }
+        with patch('evaluation_app.update_service.fetch_manifest', return_value=manifest) as fetch:
+            checked = self.client.post('/api/admin/update/check')
+        self.assertEqual(checked.status_code, 200, checked.get_json())
+        self.assertEqual(fetch.call_args.args[0], OFFICIAL_UPDATE_BASE_URL)
+
+        custom_source = 'https://updates.school.example/campusmetric'
+        custom_saved = self.client.post(
+            '/admin/settings/update', data={'update_base_url': custom_source}, follow_redirects=True,
+        )
+        self.assertIn('自定义更新源已保存'.encode(), custom_saved.data)
+        self.assertIn('当前使用自定义更新源'.encode(), custom_saved.data)
+        self.assertEqual(db.session.get(SystemSetting, 'update_base_url').value, custom_source)
+        restored = self.client.post(
+            '/admin/settings/update', data={'update_base_url': ''}, follow_redirects=True,
+        )
+        self.assertIn('已恢复使用官方更新源'.encode(), restored.data)
+        self.assertEqual(db.session.get(SystemSetting, 'update_base_url').value, '')
+
+        logo = BytesIO()
+        Image.new('RGBA', (420, 300), (92, 74, 190, 220)).save(logo, 'PNG')
+        logo.seek(0)
+        uploaded = self.client.post(
+            '/admin/settings/logo',
+            data={'action': 'upload', 'logo': (logo, 'school-logo.png')},
+            content_type='multipart/form-data', follow_redirects=True,
+        )
+        self.assertEqual(uploaded.status_code, 200)
+        self.assertIn('学校 Logo 已更新'.encode(), uploaded.data)
+        self.assertIn(b'brand-mark has-logo', uploaded.data)
+        stored_logo = Path(self.tempdir.name) / 'system' / 'school-logo.png'
+        self.assertTrue(stored_logo.is_file())
+        with self.client.get('/branding/school-logo') as logo_response:
+            self.assertEqual(logo_response.status_code, 200)
+            self.assertEqual(logo_response.mimetype, 'image/png')
+
+        ai_page = self.client.get('/admin/settings/ai')
+        self.assertIn('文本思考模型'.encode(), ai_page.data)
+        self.assertIn('视觉识别模型'.encode(), ai_page.data)
+        saved = self.client.post('/admin/settings/ai', data={
+            'reasoning_provider': 'custom',
+            'reasoning_api_base': 'https://reasoning.example.test/v1',
+            'reasoning_api_key': 'reasoning-key',
+            'reasoning_model_name': 'reasoning-model',
+            'reasoning_enabled': 'on',
+            'vision_provider': 'custom',
+            'vision_api_base': 'https://vision.example.test/v1',
+            'vision_api_key': 'vision-key',
+            'vision_model_name': 'vision-model',
+            'vision_enabled': 'on',
+        }, follow_redirects=True)
+        self.assertIn('按用途自动调用'.encode(), saved.data)
+        self.assertNotIn(b'reasoning-key', saved.data)
+        self.assertNotIn(b'vision-key', saved.data)
+        reasoning = AIModelSetting.query.filter_by(purpose='reasoning').one()
+        vision = AIModelSetting.query.filter_by(purpose='vision').one()
+        self.assertEqual(reasoning.model_name, 'reasoning-model')
+        self.assertEqual(vision.model_name, 'vision-model')
+        self.assertNotEqual(reasoning.api_base, vision.api_base)
+
+        with patch('evaluation_app.routes._call_openai', return_value='连接成功') as call:
+            tested = self.client.post('/api/admin/ai/test', json={'purpose': 'vision'})
+        self.assertEqual(tested.status_code, 200, tested.get_json())
+        self.assertEqual(call.call_args.args[0].purpose, 'vision')
+
+        with patch('evaluation_app.routes._call_openai', return_value=json.dumps(full_example(), ensure_ascii=False)) as call:
+            generated = self.client.post(
+                '/api/admin/dictionary/from-document',
+                data={'file': (BytesIO('# 测试评价方案'.encode()), 'scheme.md')},
+                content_type='multipart/form-data',
+            )
+        self.assertEqual(generated.status_code, 200, generated.get_json())
+        self.assertEqual(call.call_args.args[0].purpose, 'reasoning')
+
+        reset = self.client.post(
+            '/admin/settings/logo', data={'action': 'reset'}, follow_redirects=True,
+        )
+        self.assertIn('恢复 CampusMetric 默认 Logo'.encode(), reset.data)
+        self.assertFalse(stored_logo.exists())
+        self.assertEqual(self.client.get('/branding/school-logo').status_code, 404)
+
     def test_setup_import_and_dynamic_sources(self):
         response = self.client.post('/setup', data={
             'username': 'admin', 'display_name': '管理员',
@@ -177,6 +290,7 @@ class RouteTests(unittest.TestCase):
         self.assertIn('移动访问'.encode(), mobile_page.data)
         self.assertIn('管理员录入'.encode(), mobile_page.data)
         self.assertIn('教师填报'.encode(), mobile_page.data)
+        self.assertNotIn('手机快捷访问'.encode(), mobile_page.data)
 
         dictionary_page = self.client.get('/admin/dictionary')
         self.assertEqual(dictionary_page.status_code, 200)
@@ -188,12 +302,19 @@ class RouteTests(unittest.TestCase):
         self.assertIn(f'indicator_id={first_indicator_id}'.encode(), dictionary_page.data)
         targeted_editor = self.client.get('/admin/dictionary/manual', query_string={'indicator_id': first_indicator_id})
         self.assertIn(f'id="indicator-{first_indicator_id}" open'.encode(), targeted_editor.data)
+        self.assertIn(b'data-config-editor', targeted_editor.data)
+        self.assertIn(b'data-rule-fields', targeted_editor.data)
+        self.assertIn('图形与 JSON 同步'.encode(), targeted_editor.data)
+        self.assertIn(b'rule-editor.js', targeted_editor.data)
+        with self.client.get('/static/js/rule-editor.js') as rule_editor_script:
+            self.assertEqual(rule_editor_script.status_code, 200)
+            self.assertIn('补充填报字段'.encode(), rule_editor_script.data)
 
         for path, marker in [
             ('/admin/dictionary/manual', '手动配置'),
             ('/admin/settings/scheme', '方案与学年'),
             ('/admin/settings/ai', 'AI 大模型配置'),
-            ('/admin/settings/update', '在线更新'),
+            ('/admin/settings/update', '系统设置'),
             ('/admin/ranking', '总分排名'),
             ('/admin/archive-analytics', '档案跟踪'),
             ('/profile', '退出当前账号'),
@@ -237,6 +358,7 @@ class RouteTests(unittest.TestCase):
 
         fixed = Indicator.query.filter_by(code='fixed').one()
         ai_setting = AIModelSetting(
+            purpose='vision',
             provider='custom', api_base='https://ai.example.test/v1', api_key='test-key',
             model_name='vision-test', enabled=True,
         )
@@ -438,6 +560,9 @@ class RouteTests(unittest.TestCase):
 
         self.client.post('/logout')
         self.client.post('/login', data={'username': 'admin', 'password': 'password123'})
+        locked_manual = self.client.get('/admin/dictionary/manual', query_string={'indicator_id': fixed.id})
+        self.assertIn(b'data-locked="true"', locked_manual.data)
+        self.assertIn('计分口径已锁定'.encode(), locked_manual.data)
         records_page = self.client.get('/admin/records')
         self.assertEqual(records_page.status_code, 200)
         self.assertIn('张老师'.encode(), records_page.data)
@@ -507,6 +632,258 @@ class RouteTests(unittest.TestCase):
         self.assertEqual(cross_scheme['summary']['records'], 3)
         self.assertEqual(cross_scheme['summary']['schemes'], 2)
         self.assertTrue(any(row['scheme_code'] == 'DEPT-002' for row in cross_scheme['details']))
+
+    def test_void_delete_duplicate_check_and_changelog(self):
+        self.client.post('/setup', data={
+            'username': 'admin', 'display_name': '管理员',
+            'password': 'password123', 'academic_year': '2026—2027学年',
+        })
+        scheme = EvaluationScheme.query.one()
+        year = AcademicYear.query.one()
+        category = Category(
+            academic_year_id=year.id, code='awards', name='学生获奖', sort_order=1,
+        )
+        db.session.add(category)
+        db.session.flush()
+        indicator = Indicator(
+            academic_year_id=year.id, category_id=category.id,
+            code='student_award', name='学生获奖申报', scoring_type='fixed_score',
+            scoring_rule_json=json.dumps({
+                'score': 2,
+                'extra_fields': [
+                    {'key': 'student_name', 'label': '学生姓名', 'type': 'text'},
+                    {'key': 'certificate_no', 'label': '证书编号', 'type': 'text'},
+                ],
+            }, ensure_ascii=False),
+            data_source='teacher', allow_multiple_records=True, requires_evidence=True,
+            secondary_tracking_json=json.dumps({'enabled': True, 'label': '班级'}, ensure_ascii=False),
+        )
+        teacher = User(
+            scheme_id=scheme.id, username='teacher', display_name='张老师', role='teacher',
+            password_hash=generate_password_hash('password123'),
+        )
+        reviewer = User(
+            scheme_id=scheme.id, username='reviewer', display_name='审核老师', role='reviewer',
+            password_hash=generate_password_hash('password123'),
+        )
+        db.session.add_all([indicator, teacher, reviewer])
+        db.session.flush()
+        db.session.add_all([
+            SchemeMembership(scheme_id=scheme.id, user_id=teacher.id, membership_role='participant'),
+            SchemeMembership(scheme_id=scheme.id, user_id=reviewer.id, membership_role='reviewer'),
+        ])
+        inputs = json.dumps({
+            'qualified': True, 'student_name': '学生甲', 'certificate_no': 'CERT-001',
+        }, ensure_ascii=False)
+        approved = EvaluationRecord(
+            scheme_id=scheme.id, academic_year_id=year.id, indicator_id=indicator.id,
+            target_user_id=teacher.id, submitted_by_user_id=teacher.id,
+            source='teacher', status='approved', input_json=inputs,
+            secondary_tracking_value='三年1班', auto_score=2, final_score=2,
+            note='区级科技创新比赛二等奖', reviewed_by_user_id=reviewer.id,
+        )
+        pending = EvaluationRecord(
+            scheme_id=scheme.id, academic_year_id=year.id, indicator_id=indicator.id,
+            target_user_id=teacher.id, submitted_by_user_id=teacher.id,
+            source='teacher', status='pending', input_json=inputs,
+            secondary_tracking_value='三年1班', auto_score=2,
+            note='区级科技创新比赛二等奖（待核验）',
+        )
+        db.session.add_all([approved, pending])
+        db.session.flush()
+        attachment_path = Path(self.tempdir.name) / 'records' / str(pending.id) / 'certificate.jpg'
+        attachment_path.parent.mkdir(parents=True)
+        attachment_path.write_bytes(b'test-image')
+        attachment = RecordAttachment(
+            record_id=pending.id, original_name='certificate.jpg',
+            stored_path=str(attachment_path.relative_to(Path(self.tempdir.name))),
+            mime_type='image/jpeg', size_bytes=attachment_path.stat().st_size,
+        )
+        approved_attachment_path = Path(self.tempdir.name) / 'records' / str(approved.id) / 'approved.jpg'
+        approved_attachment_path.parent.mkdir(parents=True)
+        approved_attachment_path.write_bytes(b'approved-test-image')
+        approved_attachment = RecordAttachment(
+            record_id=approved.id, original_name='approved.jpg',
+            stored_path=str(approved_attachment_path.relative_to(Path(self.tempdir.name))),
+            mime_type='image/jpeg', size_bytes=approved_attachment_path.stat().st_size,
+        )
+        db.session.add_all([attachment, approved_attachment])
+        db.session.commit()
+        approved_id, pending_id, attachment_id = approved.id, pending.id, attachment.id
+
+        self.client.post('/logout')
+        self.client.post('/login', data={'username': 'reviewer', 'password': 'password123'})
+        review_page = self.client.get('/review')
+        self.assertIn('快速查重'.encode(), review_page.data)
+        duplicate = self.client.get(f'/api/review/{pending_id}/duplicates')
+        self.assertEqual(duplicate.status_code, 200, duplicate.get_json())
+        duplicate_payload = duplicate.get_json()
+        self.assertEqual(duplicate_payload['matches'][0]['record']['id'], approved_id)
+        self.assertGreaterEqual(duplicate_payload['matches'][0]['similarity'], 62)
+        self.assertEqual(duplicate_payload['current']['attachments'][0]['name'], 'certificate.jpg')
+        self.assertEqual(duplicate_payload['matches'][0]['record']['attachments'][0]['name'], 'approved.jpg')
+        self.assertIn(f'/attachments/{attachment_id}', duplicate_payload['current']['attachments'][0]['url'])
+        self.assertIn(b'duplicate-attachment-preview', review_page.data)
+
+        self.client.post('/logout')
+        self.client.post('/login', data={'username': 'teacher', 'password': 'password123'})
+        teacher_results = self.client.get('/my/results')
+        self.assertIn(f'data-record-detail="{approved_id}"'.encode(), teacher_results.data)
+        self.assertIn(b'data-record-detail-button', teacher_results.data)
+        self.assertIn('查看详情'.encode(), teacher_results.data)
+        self.assertIn('填报字段'.encode(), teacher_results.data)
+        self.assertIn('approved.jpg'.encode(), teacher_results.data)
+        self.assertNotIn('审核通过后只读'.encode(), teacher_results.data)
+        self.client.post(f'/my/records/{pending_id}/delete')
+        self.assertIsNotNone(db.session.get(EvaluationRecord, pending_id))
+        self.client.post(f'/my/records/{pending_id}/void')
+        db.session.expire_all()
+        self.assertEqual(db.session.get(EvaluationRecord, pending_id).status, 'voided')
+        with self.client.get(f'/attachments/{attachment_id}') as attachment_response:
+            self.assertEqual(attachment_response.status_code, 200)
+
+        self.client.post('/logout')
+        self.client.post('/login', data={'username': 'reviewer', 'password': 'password123'})
+        self.assertNotIn('待核验'.encode(), self.client.get('/review?status=all').data)
+        self.assertEqual(self.client.get(f'/attachments/{attachment_id}').status_code, 404)
+        voided = self.client.post(
+            f'/review/{approved_id}',
+            data={'action': 'void', 'review_note': '复核发现材料填写错误'},
+            follow_redirects=True,
+        )
+        self.assertIn('仅对申请教师可见'.encode(), voided.data)
+        db.session.expire_all()
+        approved_record = db.session.get(EvaluationRecord, approved_id)
+        self.assertEqual(approved_record.status, 'voided')
+        self.assertIsNone(approved_record.final_score)
+
+        self.client.post('/logout')
+        self.client.post('/login', data={'username': 'teacher', 'password': 'password123'})
+        results = self.client.get('/my/results')
+        self.assertIn('已作废'.encode(), results.data)
+        self.assertIn('复核发现材料填写错误'.encode(), results.data)
+        self.client.post(f'/my/records/{pending_id}/delete')
+        self.client.post(f'/my/records/{approved_id}/delete')
+        self.assertIsNone(db.session.get(EvaluationRecord, pending_id))
+        self.assertIsNone(db.session.get(EvaluationRecord, approved_id))
+        self.assertFalse(attachment_path.exists())
+        self.assertEqual(AuditLog.query.filter_by(action='record.deleted_by_teacher').count(), 2)
+
+        self.client.post('/logout')
+        self.client.post('/login', data={'username': 'admin', 'password': 'password123'})
+        changelog = self.client.get('/admin/settings/update')
+        self.assertEqual(changelog.status_code, 200)
+        self.assertIn('历史更新日志'.encode(), changelog.data)
+        self.assertIn(b'v0.3.7', changelog.data)
+        self.assertIn(b'v0.3.6', changelog.data)
+        self.assertIn(b'v0.1.0', changelog.data)
+
+    def test_teacher_multi_scheme_assignment_switching_and_import(self):
+        self.client.post('/setup', data={
+            'username': 'admin', 'display_name': '管理员',
+            'password': 'password123', 'academic_year': '2026—2027学年',
+        })
+        first = EvaluationScheme.query.one()
+        self.client.post('/admin/settings/scheme', data={
+            'action': 'create', 'code': 'DEPT-002', 'name': '第二套考评方案',
+            'academic_year': '2026—2027学年', 'description': '教师多方案测试',
+        })
+        second = EvaluationScheme.query.filter_by(code='DEPT-002').one()
+        second_year = AcademicYear.query.filter_by(scheme_id=second.id).one()
+        category = Category(
+            academic_year_id=second_year.id, code='teacher_multi', name='教师多方案', sort_order=1,
+        )
+        db.session.add(category)
+        db.session.flush()
+        indicator = Indicator(
+            academic_year_id=second_year.id, category_id=category.id,
+            code='teacher_multi_score', name='教师多方案填报', scoring_type='fixed_score',
+            scoring_rule_json='{"score": 2}', data_source='teacher', allow_multiple_records=True,
+            secondary_tracking_json='{"enabled": false}',
+        )
+        db.session.add(indicator)
+        db.session.commit()
+
+        response = self.client.post('/admin/users', data={
+            'display_name': '多方案教师', 'username': 'multi_teacher',
+            'password': 'password123', 'role': 'teacher',
+            'scheme_ids': [str(first.id), str(second.id)],
+        }, follow_redirects=True)
+        self.assertIn('多方案教师'.encode(), response.data)
+        self.assertIn('账号权限'.encode(), response.data)
+        self.assertIn('班主任任职年限（年）'.encode(), response.data)
+        self.assertIn('填写 0 表示暂无任职年限'.encode(), response.data)
+        self.assertIn(b'data-teacher-fields', response.data)
+        self.assertIn(b'account-editor-close', response.data)
+        teacher = User.query.filter_by(username='multi_teacher').one()
+        self.assertEqual(teacher.scheme_id, first.id)
+        self.assertEqual(
+            {membership.scheme_id for membership in teacher.scheme_memberships},
+            {first.id, second.id},
+        )
+
+        workbook = Workbook()
+        sheet = workbook.active
+        sheet.title = '账号导入'
+        sheet.append(['姓名', '登录账号', '角色', '方案编号', '初始密码'])
+        sheet.append(['批量多方案教师', 'import_multi', '教师', f'{first.code}、{second.code}', 'password123'])
+        upload = BytesIO()
+        workbook.save(upload)
+        upload.seek(0)
+        response = self.client.post(
+            '/admin/users/import', data={'file': (upload, 'multi-scheme.xlsx')},
+            content_type='multipart/form-data', follow_redirects=True,
+        )
+        self.assertIn('成功导入 1 个账号'.encode(), response.data)
+        imported = User.query.filter_by(username='import_multi').one()
+        self.assertEqual(
+            {membership.scheme_id for membership in imported.scheme_memberships},
+            {first.id, second.id},
+        )
+
+        self.client.post('/logout')
+        self.client.post('/login', data={'username': 'multi_teacher', 'password': 'password123'})
+        dashboard = self.client.get('/')
+        self.assertIn(b'id="scheme-switch-select"', dashboard.data)
+        self.assertIn(first.code.encode(), dashboard.data)
+        self.assertIn(second.code.encode(), dashboard.data)
+        prefixed_dashboard = self.client.get(
+            '/', environ_overrides={'SCRIPT_NAME': '/campus-evaluation/app'},
+        )
+        self.assertIn(
+            b'name="next" value="/campus-evaluation/app/?"', prefixed_dashboard.data,
+        )
+
+        response = self.client.post(
+            f'/scheme/select/{second.id}', data={'next': '/entry/new'}, follow_redirects=True,
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertIn('我的填报'.encode(), response.data)
+        created = self.client.post('/api/records', json={
+            'indicator_id': indicator.id, 'inputs': {'qualified': True}, 'note': '第二套方案填报',
+        })
+        self.assertEqual(created.status_code, 200, created.get_json())
+        record = db.session.get(EvaluationRecord, created.get_json()['record_id'])
+        self.assertEqual(record.scheme_id, second.id)
+
+        self.client.post(f'/scheme/select/{first.id}')
+        edit_page = self.client.get(f'/entry/{record.id}/edit')
+        self.assertEqual(edit_page.status_code, 200)
+        with self.client.session_transaction() as browser_session:
+            self.assertEqual(browser_session['active_scheme_id'], second.id)
+
+        self.client.post('/logout')
+        self.client.post('/login', data={'username': 'admin', 'password': 'password123'})
+        self.client.post(f'/admin/users/{teacher.id}/profile', data={
+            'role': 'teacher', 'scheme_ids': [str(first.id)], 'tenure_years': '0',
+        })
+        db.session.refresh(teacher)
+        self.assertEqual({membership.scheme_id for membership in teacher.scheme_memberships}, {first.id})
+
+        self.client.post('/logout')
+        self.client.post('/login', data={'username': 'multi_teacher', 'password': 'password123'})
+        self.assertEqual(self.client.post(f'/scheme/select/{second.id}').status_code, 403)
+        self.assertEqual(self.client.get(f'/entry/{record.id}/edit').status_code, 403)
 
 
 if __name__ == '__main__':

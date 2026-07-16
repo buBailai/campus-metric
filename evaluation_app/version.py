@@ -1,2 +1,2 @@
-APP_VERSION = '0.3.0'
+APP_VERSION = '0.3.7'
 UPDATE_CHANNEL = 'stable'

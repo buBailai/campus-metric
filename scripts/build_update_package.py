@@ -1,5 +1,6 @@
 import hashlib
 import json
+import runpy
 import sys
 import zipfile
 from pathlib import Path
@@ -15,6 +16,12 @@ INCLUDE = [
 
 def main(version):
     root = Path(__file__).resolve().parent.parent
+    changelog_module = runpy.run_path(str(root / 'evaluation_app' / 'changelog.py'))
+    changelog = changelog_module['CHANGELOG']
+    if not changelog or changelog[0].get('version') != version:
+        latest = changelog[0].get('version') if changelog else '无'
+        raise SystemExit(f'请先在 evaluation_app/changelog.py 顶部补充版本 {version}（当前最新：{latest}）')
+    notes = changelog_module['notes_for_version'](version)
     output_dir = root / 'dist'
     output_dir.mkdir(exist_ok=True)
     package = output_dir / f'campus-evaluation-update-{version}.zip'
@@ -25,7 +32,11 @@ def main(version):
             paths = [entry] if entry.is_file() else entry.rglob('*') if entry.is_dir() else []
             for path in paths:
                 relative = path.relative_to(root)
-                if not path.is_file() or path.suffix == '.pyc' or path.name == '.DS_Store' or '__pycache__' in relative.parts:
+                if (
+                    not path.is_file() or path.suffix == '.pyc' or path.name == '.DS_Store'
+                    or '__pycache__' in relative.parts or relative.parts[:2] == ('docs', 'assets')
+                    or relative.as_posix() == 'docs/公网测试部署.md'
+                ):
                     continue
                 print(f'  {relative}', flush=True)
                 archive.write(path, relative)
@@ -33,7 +44,7 @@ def main(version):
     manifest = {
         'version': version, 'zip': package.name, 'sha256': digest,
         'size': package.stat().st_size,
-        'notes': '项目正式命名为 CampusMetric，统一网页标题、登录页、侧栏和启动器品牌；补充 GitHub 与 Windows 免安装版发布入口；免安装启动时自动生成随机会话密钥。',
+        'notes': notes,
         'min_from': '0.1.0',
     }
     manifest_path = output_dir / 'version.json'
@@ -43,4 +54,4 @@ def main(version):
 
 
 if __name__ == '__main__':
-    main(sys.argv[1] if len(sys.argv) > 1 else '0.3.0')
+    main(sys.argv[1] if len(sys.argv) > 1 else '0.3.7')

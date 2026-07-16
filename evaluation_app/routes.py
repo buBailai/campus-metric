@@ -1,6 +1,8 @@
 import json
 import base64
+import re
 import uuid
+from difflib import SequenceMatcher
 from io import BytesIO
 from datetime import datetime
 from functools import wraps
@@ -57,6 +59,35 @@ def superadmin_required(view):
     return wrapped
 
 
+def _ensure_ai_settings():
+    settings = {
+        item.purpose: item
+        for item in AIModelSetting.query.filter(
+            AIModelSetting.purpose.in_(['reasoning', 'vision']),
+        ).order_by(AIModelSetting.id).all()
+    }
+    changed = False
+    for purpose in ('reasoning', 'vision'):
+        if purpose not in settings:
+            settings[purpose] = AIModelSetting(purpose=purpose)
+            db.session.add(settings[purpose])
+            changed = True
+    if changed:
+        db.session.commit()
+    return settings
+
+
+def _ai_setting_for(purpose):
+    return AIModelSetting.query.filter_by(purpose=purpose, enabled=True).order_by(AIModelSetting.id).first()
+
+
+def _ai_setting_ready(setting):
+    if not setting or not setting.api_base or not setting.model_name:
+        return False
+    from .providers import needs_api_key
+    return not needs_api_key(setting.provider) or bool(setting.api_key)
+
+
 def _accessible_schemes():
     query = EvaluationScheme.query
     if current_user.role == 'superadmin':
@@ -83,6 +114,63 @@ def _scheme_teachers(scheme):
     ).order_by(User.display_name).all()
 
 
+def _membership_role_for(role):
+    return 'owner' if role == 'admin' else ('reviewer' if role == 'reviewer' else 'participant')
+
+
+def _selected_schemes_from_form(fallback_current=False):
+    raw_ids = request.form.getlist('scheme_ids')
+    if not raw_ids and request.form.get('scheme_id'):
+        raw_ids = [request.form.get('scheme_id')]
+    if not raw_ids and fallback_current:
+        fallback = current_scheme()
+        if fallback:
+            return [fallback]
+    scheme_ids = []
+    for raw_id in raw_ids:
+        try:
+            scheme_id = int(raw_id)
+        except (TypeError, ValueError):
+            raise ValueError('考评方案选择无效。') from None
+        if scheme_id not in scheme_ids:
+            scheme_ids.append(scheme_id)
+    if not scheme_ids:
+        raise ValueError('请至少选择一套考评方案。')
+    schemes = [db.session.get(EvaluationScheme, scheme_id) for scheme_id in scheme_ids]
+    if any(scheme is None for scheme in schemes):
+        raise ValueError('所选考评方案不存在或已被删除。')
+    return schemes
+
+
+def _sync_user_schemes(user, schemes, role):
+    target_ids = {scheme.id for scheme in schemes}
+    membership_role = _membership_role_for(role)
+    existing = {membership.scheme_id: membership for membership in list(user.scheme_memberships)}
+
+    for scheme_id, membership in existing.items():
+        if scheme_id not in target_ids:
+            if membership.scheme.owner_user_id == user.id:
+                membership.scheme.owner_user_id = None
+            db.session.delete(membership)
+        else:
+            membership.membership_role = membership_role
+
+    for scheme in schemes:
+        if scheme.id not in existing:
+            db.session.add(SchemeMembership(
+                scheme_id=scheme.id, user_id=user.id, membership_role=membership_role,
+            ))
+        if role == 'admin' and scheme.owner_user_id is None:
+            scheme.owner_user_id = user.id
+
+    if role != 'admin':
+        for scheme in EvaluationScheme.query.filter_by(owner_user_id=user.id).all():
+            scheme.owner_user_id = None
+
+    if user.scheme_id not in target_ids:
+        user.scheme_id = schemes[0].id
+
+
 @main_bp.route('/')
 @login_required
 def dashboard():
@@ -91,7 +179,7 @@ def dashboard():
         year_id = year.id if year else -1
         scheme = current_scheme()
         stats = {
-            'teachers': User.query.filter_by(role='teacher', is_active_flag=True, scheme_id=scheme.id if scheme else None).count(),
+            'teachers': len(_scheme_teachers(scheme)),
             'indicators': Indicator.query.filter_by(academic_year_id=year_id).count(),
             'teacher_indicators': Indicator.query.filter_by(
                 academic_year_id=year_id, data_source='teacher', enabled=True,
@@ -99,7 +187,10 @@ def dashboard():
             'admin_indicators': Indicator.query.filter_by(
                 academic_year_id=year_id, data_source='admin', enabled=True,
             ).count(),
-            'records': EvaluationRecord.query.filter_by(academic_year_id=year_id).count(),
+            'records': EvaluationRecord.query.filter(
+                EvaluationRecord.academic_year_id == year_id,
+                EvaluationRecord.status != 'voided',
+            ).count(),
             'pending': EvaluationRecord.query.filter_by(academic_year_id=year_id, status='pending').count(),
         }
     elif current_user.role == 'reviewer':
@@ -108,7 +199,11 @@ def dashboard():
             'pending': EvaluationRecord.query.filter_by(academic_year_id=year_id, status='pending').count(),
             'approved': EvaluationRecord.query.filter_by(academic_year_id=year_id, status='approved').count(),
             'rejected': EvaluationRecord.query.filter_by(academic_year_id=year_id, status='rejected').count(),
-            'records': EvaluationRecord.query.filter_by(academic_year_id=year_id, source='teacher').count(),
+            'records': EvaluationRecord.query.filter(
+                EvaluationRecord.academic_year_id == year_id,
+                EvaluationRecord.source == 'teacher',
+                EvaluationRecord.status != 'voided',
+            ).count(),
         }
     else:
         records = EvaluationRecord.query.filter_by(
@@ -162,27 +257,47 @@ def change_my_password():
 @superadmin_required
 def ai_settings_page():
     from .providers import provider_list
-    setting = AIModelSetting.query.order_by(AIModelSetting.id).first()
-    if setting is None:
-        setting = AIModelSetting()
-        db.session.add(setting)
-        db.session.commit()
+    providers = provider_list()
+    provider_keys = {item['key'] for item in providers}
+    settings = _ensure_ai_settings()
     if request.method == 'POST':
-        setting.provider = request.form.get('provider', 'custom')
-        setting.api_base = _normalize_api_base(request.form.get('api_base', ''))
-        setting.model_name = request.form.get('model_name', '').strip()
-        if request.form.get('api_key', '').strip():
-            setting.api_key = request.form.get('api_key', '').strip()
-        setting.enabled = request.form.get('enabled') == 'on'
+        changed_models = {}
+        for purpose, setting in settings.items():
+            provider = request.form.get(f'{purpose}_provider', 'custom')
+            setting.provider = provider if provider in provider_keys else 'custom'
+            setting.api_base = _normalize_api_base(request.form.get(f'{purpose}_api_base', ''))
+            setting.model_name = request.form.get(f'{purpose}_model_name', '').strip()
+            supplied_key = request.form.get(f'{purpose}_api_key', '').strip()
+            if supplied_key:
+                setting.api_key = supplied_key
+            setting.enabled = request.form.get(f'{purpose}_enabled') == 'on'
+            changed_models[purpose] = {
+                'provider': setting.provider,
+                'model_name': setting.model_name,
+                'enabled': setting.enabled,
+            }
+        db.session.add(AuditLog(
+            user_id=current_user.id,
+            action='ai.settings_update',
+            entity_type='system_setting',
+            entity_id='ai_models',
+            detail_json=json.dumps(changed_models, ensure_ascii=False),
+        ))
         db.session.commit()
-        flash('AI 大模型配置已保存。', 'success')
+        flash('两类 AI 模型配置已保存，系统会按用途自动调用。', 'success')
         return redirect(url_for('main.ai_settings_page'))
-    return render_template('ai_settings.html', setting=setting, has_key=bool(setting.api_key), providers=provider_list())
+    return render_template(
+        'ai_settings.html', settings=settings,
+        has_keys={purpose: bool(setting.api_key) for purpose, setting in settings.items()},
+        providers=providers,
+    )
 
 
 @main_bp.route('/admin/settings/update', methods=['GET', 'POST'])
+@main_bp.route('/admin/settings', methods=['GET', 'POST'])
 @superadmin_required
 def update_settings_page():
+    from .changelog import CHANGELOG
     from .update_service import status
     setting = db.session.get(SystemSetting, 'update_base_url')
     if setting is None:
@@ -192,21 +307,88 @@ def update_settings_page():
     if request.method == 'POST':
         setting.value = request.form.get('update_base_url', '').strip().rstrip('/')
         db.session.commit()
-        flash('更新源地址已保存。', 'success')
+        flash('自定义更新源已保存。' if setting.value else '已恢复使用官方更新源。', 'success')
         return redirect(url_for('main.update_settings_page'))
-    return render_template('update_settings.html', update_base_url=setting.value,
-                           update_status=status(Path(current_app.root_path).parent))
+    return render_template(
+        'update_settings.html',
+        update_base_url=setting.value,
+        using_official_update_source=not bool(setting.value),
+        update_status=status(Path(current_app.root_path).parent),
+        changelog=CHANGELOG,
+    )
+
+
+@main_bp.route('/admin/settings/logo', methods=['POST'])
+@superadmin_required
+def school_logo_settings():
+    setting = db.session.get(SystemSetting, 'school_logo_path')
+    if setting is None:
+        setting = SystemSetting(key='school_logo_path', value='')
+        db.session.add(setting)
+    logo_path = Path(current_app.config['UPLOAD_FOLDER']) / 'system' / 'school-logo.png'
+    action = request.form.get('action', 'upload')
+    if action == 'reset':
+        logo_path.unlink(missing_ok=True)
+        setting.value = ''
+        audit_action = 'branding.logo_reset'
+        message = '已恢复 CampusMetric 默认 Logo。'
+    else:
+        upload = request.files.get('logo')
+        if not upload or not upload.filename:
+            flash('请选择一张 Logo 图片。', 'danger')
+            return redirect(url_for('main.update_settings_page'))
+        try:
+            image = _load_supported_image(upload.stream)
+            if image.width * image.height > 40_000_000:
+                raise ValueError('Logo 图片像素过大，请压缩后重试。')
+            image.thumbnail((512, 512))
+            if image.mode not in {'RGB', 'RGBA'}:
+                image = image.convert('RGBA' if 'transparency' in image.info else 'RGB')
+            logo_path.parent.mkdir(parents=True, exist_ok=True)
+            temporary = logo_path.with_name('.school-logo.tmp')
+            image.save(temporary, 'PNG', optimize=True)
+            temporary.replace(logo_path)
+        except ValueError as error:
+            flash(str(error).replace('附件', 'Logo'), 'danger')
+            return redirect(url_for('main.update_settings_page'))
+        except Exception:
+            current_app.logger.exception('Unable to save school logo')
+            flash('Logo 图片处理失败，请更换图片后重试。', 'danger')
+            return redirect(url_for('main.update_settings_page'))
+        setting.value = 'system/school-logo.png'
+        audit_action = 'branding.logo_update'
+        message = '学校 Logo 已更新，左侧栏和手机端将立即使用新图标。'
+    db.session.add(AuditLog(
+        user_id=current_user.id,
+        action=audit_action,
+        entity_type='system_setting',
+        entity_id='school_logo_path',
+        detail_json='{}',
+    ))
+    db.session.commit()
+    flash(message, 'success')
+    return redirect(url_for('main.update_settings_page'))
+
+
+@main_bp.route('/branding/school-logo')
+def school_logo_asset():
+    setting = db.session.get(SystemSetting, 'school_logo_path')
+    if not setting or setting.value != 'system/school-logo.png':
+        abort(404)
+    folder = Path(current_app.config['UPLOAD_FOLDER']) / 'system'
+    if not (folder / 'school-logo.png').is_file():
+        abort(404)
+    return send_from_directory(folder, 'school-logo.png', mimetype='image/png', max_age=3600)
 
 
 @main_bp.route('/api/admin/update/check', methods=['POST'])
 @superadmin_required
 def check_update_api():
-    from .update_service import APP_VERSION, fetch_manifest, version_tuple
+    from .update_service import APP_VERSION, effective_update_base_url, fetch_manifest, version_tuple
     setting = db.session.get(SystemSetting, 'update_base_url')
-    if not setting or not setting.value:
-        return jsonify({'ok': False, 'message': '请先配置更新源地址。'}), 400
+    base_url = effective_update_base_url(setting.value if setting else '')
     try:
-        manifest = fetch_manifest(setting.value)
+        manifest = fetch_manifest(base_url)
     except Exception:
         return jsonify({'ok': False, 'message': '无法连接更新源或清单格式不正确。'}), 502
     newer = version_tuple(manifest['version']) > version_tuple(APP_VERSION)
@@ -223,14 +405,18 @@ def check_update_api():
 @main_bp.route('/api/admin/update/download', methods=['POST'])
 @superadmin_required
 def download_update_api():
-    from .update_service import download_and_stage
+    from .update_service import download_and_stage, effective_update_base_url
     base = db.session.get(SystemSetting, 'update_base_url')
     pending = db.session.get(SystemSetting, 'pending_update_manifest')
-    if not base or not pending or not pending.value:
+    if not pending or not pending.value:
         return jsonify({'ok': False, 'message': '请先检查更新。'}), 400
     try:
         manifest = json.loads(pending.value)
-        download_and_stage(Path(current_app.root_path).parent, base.value, manifest)
+        download_and_stage(
+            Path(current_app.root_path).parent,
+            effective_update_base_url(base.value if base else ''),
+            manifest,
+        )
     except Exception as error:
         return jsonify({'ok': False, 'message': str(error)[:160]}), 502
     return jsonify({'ok': True, 'message': '更新包已下载、校验并安全暂存。'})
@@ -258,17 +444,21 @@ def apply_update_api():
 @main_bp.route('/api/admin/ai/test', methods=['POST'])
 @superadmin_required
 def test_ai_api():
-    from .providers import needs_api_key
-    setting = AIModelSetting.query.order_by(AIModelSetting.id).first()
-    if not setting or not setting.api_base or not setting.model_name or (needs_api_key(setting.provider) and not setting.api_key):
-        return jsonify({'ok': False, 'message': '请先完整保存 API 配置。'}), 400
+    payload = request.get_json(silent=True) or {}
+    purpose = payload.get('purpose', 'reasoning')
+    if purpose not in {'reasoning', 'vision'}:
+        return jsonify({'ok': False, 'message': '模型用途无效。'}), 400
+    setting = _ai_setting_for(purpose)
+    purpose_label = '文本思考模型' if purpose == 'reasoning' else '视觉识别模型'
+    if not _ai_setting_ready(setting):
+        return jsonify({'ok': False, 'message': f'请先完整保存并启用{purpose_label}配置。'}), 400
     try:
         content = _call_openai(setting, [{
             'role': 'user', 'content': '请只回复“连接成功”。',
         }], max_tokens=20)
         return jsonify({'ok': True, 'message': content[:100]})
     except Exception:
-        return jsonify({'ok': False, 'message': 'API 连接失败，请检查 Base URL、Key 和模型 ID。'}), 502
+        return jsonify({'ok': False, 'message': f'{purpose_label}连接失败，请检查 Base URL、Key 和模型 ID。'}), 502
 
 
 @main_bp.route('/admin/dictionary')
@@ -283,7 +473,15 @@ def dictionary_page():
 def dictionary_manual_page():
     year = current_year()
     categories = Category.query.filter_by(academic_year_id=year.id if year else -1).order_by(Category.sort_order, Category.id).all()
-    return render_template('dictionary_manual.html', year=year, categories=categories)
+    locked_indicator_ids = {
+        row[0] for row in db.session.query(EvaluationRecord.indicator_id).filter(
+            EvaluationRecord.academic_year_id == (year.id if year else -1),
+        ).distinct().all()
+    }
+    return render_template(
+        'dictionary_manual.html', year=year, categories=categories,
+        locked_indicator_ids=locked_indicator_ids,
+    )
 
 
 @main_bp.route('/admin/dictionary/categories', methods=['POST'])
@@ -428,14 +626,21 @@ def update_indicator(indicator_id):
 @main_bp.route('/admin/dictionary/download/<kind>')
 @admin_required
 def dictionary_download(kind):
-    choices = {
-        'blank': ('考评字典空白模板.json', blank_template()),
-        'example': ('考评字典完整示例.json', full_example()),
-        'current': ('当前考评字典.json', export_dictionary()),
-    }
-    if kind not in choices or choices[kind][1] is None:
-        abort(404)
-    filename, data = choices[kind]
+    if kind == 'current':
+        data = export_dictionary()
+        if data is None:
+            abort(404)
+        scheme = current_scheme()
+        base = (scheme.name.strip() if scheme and scheme.name and scheme.name.strip() else '考评字典')
+        filename = f'{base}-考评字典-{datetime.now().strftime("%Y%m%d")}.json'
+    else:
+        choices = {
+            'blank': ('考评字典空白模板.json', blank_template()),
+            'example': ('考评字典完整示例.json', full_example()),
+        }
+        if kind not in choices or choices[kind][1] is None:
+            abort(404)
+        filename, data = choices[kind]
     return Response(
         json.dumps(data, ensure_ascii=False, indent=2),
         mimetype='application/json',
@@ -504,14 +709,13 @@ def dictionary_import_api():
 def dictionary_from_document_api():
     """Extract PDF/Markdown, ask the configured model for schema JSON, validate, then import."""
     from pypdf import PdfReader
-    from .providers import needs_api_key
 
     upload = request.files.get('file')
-    setting = AIModelSetting.query.filter_by(enabled=True).order_by(AIModelSetting.id).first()
+    setting = _ai_setting_for('reasoning')
     if not upload or not upload.filename:
         return jsonify({'ok': False, 'message': '请选择 PDF 或 Markdown 评价方案。'}), 400
-    if not setting or not setting.api_base or not setting.model_name or (needs_api_key(setting.provider) and not setting.api_key):
-        return jsonify({'ok': False, 'message': '超级管理员尚未完成可用的 AI 配置。'}), 409
+    if not _ai_setting_ready(setting):
+        return jsonify({'ok': False, 'message': '超级管理员尚未完成可用的文本思考模型配置。'}), 409
     suffix = Path(upload.filename).suffix.lower()
     if suffix not in {'.pdf', '.md', '.markdown'}:
         return jsonify({'ok': False, 'message': '只支持 PDF、MD 或 Markdown 文件。'}), 415
@@ -606,9 +810,12 @@ def teacher_edit_record_page(record_id):
     record = db.get_or_404(EvaluationRecord, record_id)
     if current_user.role != 'teacher' or record.source != 'teacher' or record.submitted_by_user_id != current_user.id:
         abort(403)
+    if not _can_access_scheme(record.scheme_id):
+        abort(403)
     if record.status not in {'pending', 'rejected'} or record.academic_year.status != 'active':
         flash('只有待审核或已退回的填报可以修改。', 'danger')
         return redirect(url_for('main.my_results_page'))
+    session['active_scheme_id'] = record.scheme_id
     return render_template(
         'entry_form.html', mode='teacher', teachers=[], edit_record_id=record.id,
         edit_record_status=record.status,
@@ -627,8 +834,6 @@ def admin_entry_page():
 @login_required
 def recognize_entry_image():
     """Recognize an evidence image before submission and map it to the selected indicator form."""
-    from .providers import needs_api_key
-
     year = current_year()
     indicator = db.session.get(Indicator, request.form.get('indicator_id', type=int))
     upload = request.files.get('file')
@@ -645,9 +850,9 @@ def recognize_entry_image():
     if not upload or not upload.filename:
         return jsonify({'ok': False, 'message': '请先选择一张证书或材料图片。'}), 400
 
-    setting = AIModelSetting.query.filter_by(enabled=True).order_by(AIModelSetting.id).first()
-    if not setting or not setting.api_base or not setting.model_name or (needs_api_key(setting.provider) and not setting.api_key):
-        return jsonify({'ok': False, 'message': '超级管理员尚未完成可用的 AI 大模型配置。'}), 409
+    setting = _ai_setting_for('vision')
+    if not _ai_setting_ready(setting):
+        return jsonify({'ok': False, 'message': '超级管理员尚未完成可用的视觉识别模型配置。'}), 409
     try:
         image_url = _uploaded_image_data_url(upload)
     except ValueError as error:
@@ -692,13 +897,151 @@ def review_page():
     query = EvaluationRecord.query.filter_by(
         academic_year_id=year.id if year else -1,
         source='teacher',
-    )
+    ).filter(EvaluationRecord.status != 'voided')
     if year:
         query = query.filter_by(scheme_id=year.scheme_id)
     if status != 'all':
         query = query.filter_by(status=status)
     records = query.order_by(EvaluationRecord.created_at.desc()).all()
     return render_template('review.html', records=records, rows=[_record_view(row) for row in records], status=status)
+
+
+def _comparison_value(value):
+    if isinstance(value, bool):
+        return '是' if value else '否'
+    if isinstance(value, (dict, list)):
+        value = json.dumps(value, ensure_ascii=False, sort_keys=True)
+    return re.sub(r'[\s\W_]+', '', str(value or '').lower(), flags=re.UNICODE)
+
+
+def _record_inputs(record):
+    try:
+        data = json.loads(record.input_json or '{}')
+    except json.JSONDecodeError:
+        data = {}
+    return data if isinstance(data, dict) else {}
+
+
+def _duplicate_similarity(current, candidate):
+    current_inputs = _record_inputs(current)
+    candidate_inputs = _record_inputs(candidate)
+    common_keys = sorted(set(current_inputs) & set(candidate_inputs))
+    field_scores = []
+    reasons = []
+    current_labels = {item['key']: item['label'] for item in _record_input_fields(current, current_inputs)}
+    for key in common_keys:
+        left = _comparison_value(current_inputs.get(key))
+        right = _comparison_value(candidate_inputs.get(key))
+        if not left or not right:
+            continue
+        ratio = 1.0 if left == right else SequenceMatcher(None, left, right).ratio()
+        field_scores.append(ratio)
+        if ratio >= 0.92:
+            reasons.append(f'{current_labels.get(key, key)}相同')
+
+    input_score = sum(field_scores) / len(field_scores) if field_scores else 0.0
+    generic_keys = {'qualified', 'count', 'score', 'value', 'years'}
+    informative = any(key not in generic_keys for key in common_keys)
+    input_weight = 0.70 if informative else 0.35
+
+    tracking_left = _comparison_value(current.secondary_tracking_value)
+    tracking_right = _comparison_value(candidate.secondary_tracking_value)
+    tracking_score = 0.0
+    if tracking_left and tracking_right:
+        tracking_score = 1.0 if tracking_left == tracking_right else SequenceMatcher(
+            None, tracking_left, tracking_right,
+        ).ratio()
+        if tracking_score >= 0.92:
+            reasons.append('二级跟踪字段相同')
+
+    note_left = _comparison_value(current.note)
+    note_right = _comparison_value(candidate.note)
+    note_score = 0.0
+    if note_left and note_right:
+        note_score = SequenceMatcher(None, note_left, note_right).ratio()
+        if note_score >= 0.88:
+            reasons.append('补充说明高度相似')
+
+    teacher_score = 1.0 if current.target_user_id == candidate.target_user_id else 0.0
+    if teacher_score:
+        reasons.append('申报教师相同')
+    score = (
+        input_score * input_weight
+        + tracking_score * 0.15
+        + note_score * 0.10
+        + teacher_score * 0.05
+    )
+    return min(score, 1.0), reasons
+
+
+def _duplicate_record_payload(record):
+    view = _record_view(record)
+    return {
+        'id': record.id,
+        'teacher': view['teacher'],
+        'indicator': view['indicator'],
+        'category': view['category'],
+        'academic_year': record.academic_year.label,
+        'source': '管理员录入' if record.source == 'admin' else '教师填报',
+        'status_label': view['status_label'],
+        'input_fields': view['input_fields'],
+        'tracking_label': view['tracking_label'],
+        'tracking': view['tracking'] or '',
+        'note': view['note'] or '',
+        'score': record.final_score if record.final_score is not None else record.auto_score,
+        'created_at': record.created_at.strftime('%Y-%m-%d %H:%M'),
+        'attachments': [{
+            'id': item.id,
+            'name': item.original_name,
+            'url': url_for('main.view_attachment', attachment_id=item.id),
+        } for item in record.attachments],
+    }
+
+
+@main_bp.route('/api/review/<int:record_id>/duplicates')
+@reviewer_required
+def review_duplicate_check_api(record_id):
+    record = db.get_or_404(EvaluationRecord, record_id)
+    if not _can_access_scheme(record.scheme_id):
+        abort(403)
+    if record.source != 'teacher' or record.status == 'voided':
+        return jsonify({'ok': False, 'message': '该记录不支持查重。'}), 409
+
+    candidates = EvaluationRecord.query.filter(
+        EvaluationRecord.id != record.id,
+        EvaluationRecord.scheme_id == record.scheme_id,
+        EvaluationRecord.indicator_id == record.indicator_id,
+        EvaluationRecord.status == 'approved',
+    ).order_by(EvaluationRecord.created_at.desc()).limit(150).all()
+    matches = []
+    for candidate in candidates:
+        similarity, reasons = _duplicate_similarity(record, candidate)
+        if similarity < 0.62:
+            continue
+        matches.append({
+            'similarity': round(similarity * 100),
+            'reasons': reasons[:5],
+            'record': _duplicate_record_payload(candidate),
+        })
+    matches.sort(key=lambda item: (-item['similarity'], -item['record']['id']))
+    matches = matches[:5]
+    db.session.add(AuditLog(
+        user_id=current_user.id,
+        action='record.duplicate_check',
+        entity_type='evaluation_record',
+        entity_id=str(record.id),
+        detail_json=json.dumps({
+            'approved_candidates': len(candidates),
+            'matches': [{'id': item['record']['id'], 'similarity': item['similarity']} for item in matches],
+        }, ensure_ascii=False),
+    ))
+    db.session.commit()
+    return jsonify({
+        'ok': True,
+        'message': f'发现 {len(matches)} 条相似的已通过记录。' if matches else '未发现相似的已通过记录。',
+        'current': _duplicate_record_payload(record),
+        'matches': matches,
+    })
 
 
 @main_bp.route('/review/<int:record_id>', methods=['POST'])
@@ -710,12 +1053,29 @@ def review_record(record_id):
     if record.academic_year.status != 'active':
         flash('已归档学年不能审核，请先还原。', 'danger')
         return redirect(url_for('main.review_page'))
-    if record.source != 'teacher' or record.status != 'pending':
-        flash('该记录已处理或不需要审核。', 'danger')
-        return redirect(url_for('main.review_page'))
     action = request.form.get('action')
     note = request.form.get('review_note', '').strip()
-    if action == 'approve':
+    if record.source != 'teacher':
+        flash('该记录不需要审核。', 'danger')
+        return redirect(url_for('main.review_page'))
+    if action == 'void':
+        if record.status != 'approved':
+            flash('只能作废已审核通过的申报记录。', 'danger')
+            return redirect(url_for('main.review_page', status='approved'))
+        if not note:
+            flash('作废已通过记录时请填写原因。', 'danger')
+            return redirect(url_for('main.review_page', status='approved'))
+        before_score = record.final_score
+        record.status = 'voided'
+        record.final_score = None
+        record.review_note = f'作废原因：{note}'
+        message = '已作废该条已通过申报，记录现仅对申请教师可见，由教师自行删除。'
+        audit_action = 'record.voided_by_reviewer'
+        audit_detail = {'reason': note, 'before_score': before_score}
+    elif record.status != 'pending':
+        flash('该记录已处理或不需要审核。', 'danger')
+        return redirect(url_for('main.review_page'))
+    elif action == 'approve':
         record.status = 'approved'
         record.final_score = record.auto_score
         message = '已通过该条填报。'
@@ -728,19 +1088,96 @@ def review_record(record_id):
         message = '已退回该条填报。'
     else:
         abort(400)
-    record.review_note = note
+    if action != 'void':
+        record.review_note = note
+        audit_action = f'record.{record.status}'
+        audit_detail = {'review_note': note, 'final_score': record.final_score}
     record.reviewed_by_user_id = current_user.id
     record.reviewed_at = datetime.now()
     db.session.add(AuditLog(
         user_id=current_user.id,
-        action=f'record.{record.status}',
+        action=audit_action,
         entity_type='evaluation_record',
         entity_id=str(record.id),
-        detail_json=json.dumps({'review_note': note, 'final_score': record.final_score}, ensure_ascii=False),
+        detail_json=json.dumps(audit_detail, ensure_ascii=False),
     ))
     db.session.commit()
     flash(message, 'success')
     return redirect(url_for('main.review_page'))
+
+
+@main_bp.route('/my/records/<int:record_id>/void', methods=['POST'])
+@login_required
+def void_my_record(record_id):
+    record = db.get_or_404(EvaluationRecord, record_id)
+    if current_user.role != 'teacher' or record.source != 'teacher' or record.submitted_by_user_id != current_user.id:
+        abort(403)
+    if not _can_access_scheme(record.scheme_id):
+        abort(403)
+    if record.academic_year.status != 'active':
+        flash('已归档学年不能作废申报，请先由管理员还原。', 'danger')
+    elif record.status not in {'pending', 'rejected'}:
+        flash('只有待审核或已退回的申报可由教师作废。', 'danger')
+    else:
+        previous_status = record.status
+        record.status = 'voided'
+        record.final_score = None
+        record.review_note = '申请人已主动作废该条申报。'
+        db.session.add(AuditLog(
+            user_id=current_user.id,
+            action='record.voided_by_teacher',
+            entity_type='evaluation_record',
+            entity_id=str(record.id),
+            detail_json=json.dumps({'before_status': previous_status}, ensure_ascii=False),
+        ))
+        db.session.commit()
+        flash('申报已作废，现在可以由你自行删除。', 'success')
+    return redirect(url_for('main.my_results_page'))
+
+
+@main_bp.route('/my/records/<int:record_id>/delete', methods=['POST'])
+@login_required
+def delete_my_voided_record(record_id):
+    record = db.get_or_404(EvaluationRecord, record_id)
+    if current_user.role != 'teacher' or record.source != 'teacher' or record.submitted_by_user_id != current_user.id:
+        abort(403)
+    if not _can_access_scheme(record.scheme_id):
+        abort(403)
+    if record.academic_year.status != 'active':
+        flash('已归档学年不能删除记录，请先由管理员还原。', 'danger')
+        return redirect(url_for('main.my_results_page'))
+    if record.status != 'voided':
+        flash('记录必须先作废，才能删除。', 'danger')
+        return redirect(url_for('main.my_results_page'))
+
+    attachment_paths = [Path(current_app.config['UPLOAD_FOLDER']) / item.stored_path for item in record.attachments]
+    snapshot = {
+        'scheme_id': record.scheme_id,
+        'academic_year_id': record.academic_year_id,
+        'indicator_id': record.indicator_id,
+        'input_json': record.input_json,
+        'secondary_tracking_value': record.secondary_tracking_value,
+        'note': record.note,
+        'attachment_names': [item.original_name for item in record.attachments],
+    }
+    deleted_id = record.id
+    db.session.delete(record)
+    db.session.add(AuditLog(
+        user_id=current_user.id,
+        action='record.deleted_by_teacher',
+        entity_type='evaluation_record',
+        entity_id=str(deleted_id),
+        detail_json=json.dumps(snapshot, ensure_ascii=False),
+    ))
+    db.session.commit()
+    for path in attachment_paths:
+        try:
+            path.unlink(missing_ok=True)
+            path.parent.rmdir()
+        except OSError:
+            current_app.logger.warning('Unable to remove deleted record attachment path %s', path)
+    flash('已删除作废申报及其材料。', 'success')
+    return redirect(url_for('main.my_results_page'))
 
 
 @main_bp.route('/my/results')
@@ -759,6 +1196,7 @@ def my_results_page():
         'approved': sum(row.status == 'approved' for row in records),
         'pending': sum(row.status == 'pending' for row in records),
         'rejected': sum(row.status == 'rejected' for row in records),
+        'voided': sum(row.status == 'voided' for row in records),
     }
     return render_template('results.html', rows=rows, totals=totals, year=year)
 
@@ -772,10 +1210,16 @@ def users_page():
         password = request.form.get('password', '')
         role = request.form.get('role', 'teacher')
         employee_no = request.form.get('employee_no', '').strip() or None
-        scheme_id = request.form.get('scheme_id', type=int)
-        scheme = db.session.get(EvaluationScheme, scheme_id) if scheme_id else current_scheme()
+        try:
+            selected_schemes = _selected_schemes_from_form(fallback_current=True)
+            scheme_error = None
+        except ValueError as error:
+            selected_schemes = []
+            scheme_error = str(error)
         if role not in {'admin', 'reviewer', 'teacher'}:
             flash('账号角色无效。', 'danger')
+        elif scheme_error:
+            flash(scheme_error, 'danger')
         elif not username or not display_name:
             flash('请填写账号和姓名。', 'danger')
         elif len(password) < 8:
@@ -791,22 +1235,19 @@ def users_page():
                 password_hash=generate_password_hash(password),
                 role=role,
                 employee_no=employee_no,
-                scheme_id=scheme.id if scheme else None,
+                scheme_id=selected_schemes[0].id,
                 is_homeroom_teacher=role == 'teacher' and request.form.get('is_homeroom_teacher') == 'on',
                 is_grade_leader=role == 'teacher' and request.form.get('is_grade_leader') == 'on',
             )
             db.session.add(user)
             db.session.flush()
-            if scheme and role != 'superadmin':
-                membership_role = 'owner' if role == 'admin' else ('reviewer' if role == 'reviewer' else 'participant')
-                db.session.add(SchemeMembership(
-                    scheme_id=scheme.id, user_id=user.id, membership_role=membership_role,
-                ))
-                if role == 'admin' and scheme.owner_user_id is None:
-                    scheme.owner_user_id = user.id
+            _sync_user_schemes(user, selected_schemes, role)
             db.session.add(AuditLog(
                 user_id=current_user.id, action='user.create', entity_type='user', entity_id=str(user.id),
-                detail_json=json.dumps({'username': username, 'role': role}, ensure_ascii=False),
+                detail_json=json.dumps({
+                    'username': username, 'role': role,
+                    'scheme_ids': [scheme.id for scheme in selected_schemes],
+                }, ensure_ascii=False),
             ))
             db.session.commit()
             flash(f'已创建账号：{display_name}', 'success')
@@ -854,21 +1295,17 @@ def import_accounts():
     imported = []
     try:
         for item in records:
-            scheme = scheme_by_code[item['scheme_code']]
+            selected_schemes = [scheme_by_code[code] for code in item['scheme_codes']]
             user = User(
                 username=item['username'], display_name=item['display_name'], employee_no=item['employee_no'],
-                password_hash=generate_password_hash(item['password']), role=item['role'], scheme_id=scheme.id,
+                password_hash=generate_password_hash(item['password']), role=item['role'],
+                scheme_id=selected_schemes[0].id,
                 is_homeroom_teacher=item['is_homeroom_teacher'], is_grade_leader=item['is_grade_leader'],
                 tenure_years=item['tenure_years'], is_active_flag=item['is_active_flag'],
             )
             db.session.add(user)
             db.session.flush()
-            membership_role = 'owner' if user.role == 'admin' else ('reviewer' if user.role == 'reviewer' else 'participant')
-            db.session.add(SchemeMembership(
-                scheme_id=scheme.id, user_id=user.id, membership_role=membership_role,
-            ))
-            if user.role == 'admin' and scheme.owner_user_id is None:
-                scheme.owner_user_id = user.id
+            _sync_user_schemes(user, selected_schemes, user.role)
             imported.append(user.username)
         db.session.add(AuditLog(
             user_id=current_user.id, action='user.bulk_import', entity_type='user', entity_id='',
@@ -897,11 +1334,16 @@ def update_user_profile(user_id):
     role = request.form.get('role', user.role)
     if role not in {'admin', 'reviewer', 'teacher'}:
         abort(400)
-    scheme = db.session.get(EvaluationScheme, request.form.get('scheme_id'))
+    try:
+        selected_schemes = _selected_schemes_from_form()
+    except ValueError as error:
+        flash(str(error), 'danger')
+        return redirect(url_for('main.users_page'))
+    before_scheme_ids = sorted({membership.scheme_id for membership in user.scheme_memberships} | ({user.scheme_id} if user.scheme_id else set()))
     before = {
         'role': user.role, 'is_homeroom_teacher': user.is_homeroom_teacher,
         'is_grade_leader': user.is_grade_leader, 'tenure_years': user.tenure_years,
-        'scheme_id': user.scheme_id,
+        'scheme_id': user.scheme_id, 'scheme_ids': before_scheme_ids,
     }
     user.role = role
     user.is_homeroom_teacher = role == 'teacher' and request.form.get('is_homeroom_teacher') == 'on'
@@ -910,26 +1352,18 @@ def update_user_profile(user_id):
         user.tenure_years = max(0, int(request.form.get('tenure_years', 0)))
     except ValueError:
         user.tenure_years = 0
-    if scheme:
-        user.scheme_id = scheme.id
-        SchemeMembership.query.filter_by(user_id=user.id).delete(synchronize_session=False)
-        db.session.add(SchemeMembership(
-            scheme_id=scheme.id, user_id=user.id,
-            membership_role='owner' if role == 'admin' else ('reviewer' if role == 'reviewer' else 'participant'),
-        ))
-        if role == 'admin' and scheme.owner_user_id is None:
-            scheme.owner_user_id = user.id
+    _sync_user_schemes(user, selected_schemes, role)
     after = {
         'role': user.role, 'is_homeroom_teacher': user.is_homeroom_teacher,
         'is_grade_leader': user.is_grade_leader, 'tenure_years': user.tenure_years,
-        'scheme_id': user.scheme_id,
+        'scheme_id': user.scheme_id, 'scheme_ids': [scheme.id for scheme in selected_schemes],
     }
     db.session.add(AuditLog(
         user_id=current_user.id, action='user.profile_update', entity_type='user', entity_id=str(user.id),
         detail_json=json.dumps({'before': before, 'after': after}, ensure_ascii=False),
     ))
     db.session.commit()
-    flash(f'已更新 {user.display_name} 的角色与标记。', 'success')
+    flash(f'已更新 {user.display_name} 的角色、标记与可用方案。', 'success')
     return redirect(url_for('main.users_page'))
 
 
@@ -974,7 +1408,7 @@ def records_page():
     year = _selected_year()
     records = EvaluationRecord.query.filter_by(
         academic_year_id=year.id if year else -1,
-    ).order_by(EvaluationRecord.created_at.desc()).all()
+    ).filter(EvaluationRecord.status != 'voided').order_by(EvaluationRecord.created_at.desc()).all()
     rows = [_record_view(row) for row in records]
     total = sum(record.final_score or 0 for record in records if record.status == 'approved')
     return render_template('records.html', rows=rows, total=total, year=year)
@@ -986,6 +1420,8 @@ def override_record_score(record_id):
     record = db.get_or_404(EvaluationRecord, record_id)
     if not _can_access_scheme(record.scheme_id):
         abort(403)
+    if record.status == 'voided':
+        abort(404)
     if record.academic_year.status != 'active':
         flash('已归档学年不能改分，请先还原。', 'danger')
         return redirect(url_for('main.records_page', year_id=record.academic_year_id))
@@ -1047,6 +1483,7 @@ def archive_analytics_page():
     tracking_values = [row[0] for row in db.session.query(EvaluationRecord.secondary_tracking_value).filter(
         EvaluationRecord.scheme_id.in_(scheme_ids or [-1]),
         EvaluationRecord.indicator_id.in_(class_indicator_ids or [-1]),
+        EvaluationRecord.status != 'voided',
         EvaluationRecord.secondary_tracking_value.isnot(None),
         EvaluationRecord.secondary_tracking_value != '',
     ).distinct().order_by(EvaluationRecord.secondary_tracking_value).all()]
@@ -1179,7 +1616,10 @@ def export_results_excel():
         summary.append([index, teacher.display_name, teacher.employee_no or '', score, '是' if teacher.is_homeroom_teacher else '否', '是' if teacher.is_grade_leader else '否'])
     detail = workbook.create_sheet('考评明细')
     detail.append(['教师', '一级指标', '考评项目', '来源', '状态', '自动分', '最终分', '说明', '时间'])
-    for record in EvaluationRecord.query.filter_by(academic_year_id=year.id).order_by(EvaluationRecord.id).all():
+    for record in EvaluationRecord.query.filter(
+        EvaluationRecord.academic_year_id == year.id,
+        EvaluationRecord.status != 'voided',
+    ).order_by(EvaluationRecord.id).all():
         detail.append([record.target_user.display_name, record.indicator.category.name, record.indicator.name,
                        record.source, record.status, record.auto_score, record.final_score, record.note,
                        record.created_at.strftime('%Y-%m-%d %H:%M')])
@@ -1302,7 +1742,10 @@ def select_scheme(scheme_id):
     if not _can_access_scheme(scheme_id):
         abort(403)
     session['active_scheme_id'] = scheme_id
-    return redirect(request.form.get('next') or url_for('main.dashboard'))
+    next_url = request.form.get('next', '')
+    if not next_url.startswith('/') or next_url.startswith('//'):
+        next_url = url_for('main.dashboard')
+    return redirect(next_url)
 
 
 @main_bp.route('/admin/schemes/<int:scheme_id>/archive', methods=['POST'])
@@ -1479,6 +1922,8 @@ def teacher_record_api(record_id):
     record = db.get_or_404(EvaluationRecord, record_id)
     if current_user.role != 'teacher' or record.source != 'teacher' or record.submitted_by_user_id != current_user.id:
         abort(403)
+    if not _can_access_scheme(record.scheme_id):
+        abort(403)
     if record.status not in {'pending', 'rejected'} or record.academic_year.status != 'active':
         return jsonify({'ok': False, 'message': '只有待审核或已退回的填报可以修改。'}), 409
     if request.method == 'GET':
@@ -1562,6 +2007,8 @@ def upload_record_attachments(record_id):
         abort(403)
     if record.academic_year.status != 'active':
         return jsonify({'ok': False, 'message': '已归档学年不能上传材料。'}), 409
+    if current_user.role == 'teacher' and record.status not in {'pending', 'rejected'}:
+        return jsonify({'ok': False, 'message': '该申报当前状态不允许上传或替换材料。'}), 409
     files = request.files.getlist('files')
     if not files:
         return jsonify({'ok': False, 'message': '请选择图片。'}), 400
@@ -1625,6 +2072,8 @@ def upload_record_attachments(record_id):
 def view_attachment(attachment_id):
     attachment = db.get_or_404(RecordAttachment, attachment_id)
     record = attachment.record
+    if record.status == 'voided' and record.submitted_by_user_id != current_user.id:
+        abort(404)
     if current_user.role in {'superadmin', 'admin', 'reviewer'} and not _can_access_scheme(record.scheme_id):
         abort(403)
     if current_user.role not in {'superadmin', 'admin', 'reviewer'} and record.target_user_id != current_user.id:
@@ -1638,12 +2087,17 @@ def view_attachment(attachment_id):
 def recognize_attachment(attachment_id):
     attachment = db.get_or_404(RecordAttachment, attachment_id)
     record = attachment.record
+    if record.status == 'voided':
+        if record.submitted_by_user_id != current_user.id:
+            abort(404)
+        return jsonify({'ok': False, 'message': '已作废记录不能再进行 AI 识别。'}), 409
     if current_user.role not in {'superadmin', 'admin'} and record.submitted_by_user_id != current_user.id:
         abort(403)
-    setting = AIModelSetting.query.filter_by(enabled=True).order_by(AIModelSetting.id).first()
-    from .providers import needs_api_key
-    if not setting or not setting.api_base or not setting.model_name or (needs_api_key(setting.provider) and not setting.api_key):
-        return jsonify({'ok': False, 'message': '管理员尚未完成 AI 大模型配置。'}), 409
+    if current_user.role == 'teacher' and record.status not in {'pending', 'rejected'}:
+        return jsonify({'ok': False, 'message': '当前状态不能再修改识别内容。'}), 409
+    setting = _ai_setting_for('vision')
+    if not _ai_setting_ready(setting):
+        return jsonify({'ok': False, 'message': '管理员尚未完成视觉识别模型配置。'}), 409
     absolute = Path(current_app.config['UPLOAD_FOLDER']) / attachment.stored_path
     try:
         encoded = base64.b64encode(absolute.read_bytes()).decode('ascii')
@@ -1705,12 +2159,16 @@ def _record_view(record):
     return {
         'id': record.id,
         'teacher': record.target_user.display_name,
+        'scheme_name': record.scheme.name if record.scheme else '',
+        'scheme_code': record.scheme.code if record.scheme else '',
+        'academic_year': record.academic_year.label if record.academic_year else '',
         'indicator': record.indicator.name,
         'category': record.indicator.category.name,
         'source': record.source,
         'status': record.status,
         'status_label': {
             'draft': '草稿', 'pending': '待审核', 'approved': '已通过', 'rejected': '已退回',
+            'voided': '已作废',
         }.get(record.status, record.status),
         'inputs': input_text,
         'input_fields': input_fields,
@@ -1723,7 +2181,18 @@ def _record_view(record):
         'review_note': record.review_note,
         'created_at': record.created_at,
         'attachments': [{'id': item.id, 'name': item.original_name} for item in record.attachments],
-        'can_edit': record.source == 'teacher' and record.status in {'pending', 'rejected'},
+        'can_edit': (
+            record.source == 'teacher' and record.status in {'pending', 'rejected'}
+            and record.academic_year.status == 'active'
+        ),
+        'can_void': (
+            record.source == 'teacher' and record.status in {'pending', 'rejected'}
+            and record.academic_year.status == 'active'
+        ),
+        'can_delete': (
+            record.source == 'teacher' and record.status == 'voided'
+            and record.academic_year.status == 'active'
+        ),
     }
 
 

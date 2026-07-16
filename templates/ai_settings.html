@@ -1,23 +1,60 @@
 {% extends "base.html" %}
 {% block title %}AI 大模型配置{% endblock %}
 {% block content %}
-<section class="page-heading"><div><div class="eyebrow">SUPERADMIN · AI MODEL</div><h1>AI 大模型配置</h1><p>由超级管理员统一配置，部门管理员只能调用，不会接触 API Key。</p></div></section>
-<section class="settings-grid">
-  <section class="panel"><div class="eyebrow">SCHOOL API</div><h2>全校统一配置</h2><form method="post" class="stack-form" id="ai-config-form">
-    <label>API 来源<select name="provider" id="ai-provider">{% for provider in providers %}<option value="{{ provider.key }}" {% if setting.provider == provider.key %}selected{% endif %}>{{ provider.label }}</option>{% endfor %}</select><small id="provider-hint">支持豆包、Ollama 与常见 OpenAI 兼容厂商。</small></label>
-    <label>Base URL<input name="api_base" id="ai-base" value="{{ setting.api_base }}" placeholder="https://api.example.com/v1"><small>填到 /v1 即可，系统自动拼接 /chat/completions。</small></label>
-    <label>API Key<input name="api_key" type="password" autocomplete="new-password" placeholder="{{ '已保存，留空表示不修改' if has_key else '请输入 API Key' }}"></label>
-    <label>视觉模型 ID<input name="model_name" id="ai-model" value="{{ setting.model_name }}" placeholder="请以厂商当前支持图像的模型 ID 为准"></label>
-    <label class="check-row"><input type="checkbox" name="enabled" {% if setting.enabled %}checked{% endif %}>启用证书识别及评价方案 AI 转换</label>
-    <button class="primary-button" type="submit">保存 AI 配置</button>
-  </form></section>
-  <aside class="panel"><div class="eyebrow">CONNECTION TEST</div><h2>连接测试</h2><p class="lead">先保存配置，再发起一次最小文本请求。测试会产生少量 API 用量。</p><button class="secondary-button full" id="test-ai" type="button">测试 API 连接</button><div id="ai-test-result" class="validation-result" hidden></div><div class="security-note"><strong>安全说明</strong><p>Key 只保存在本机 SQLite，不出现在前端源码、日志、导出文件和更新包中。</p></div></aside>
+<section class="page-heading">
+  <div><div class="eyebrow">SUPERADMIN · AI MODELS</div><h1>AI 大模型配置</h1><p>分别配置文字推理和图像理解模型，系统会按实际任务自动选择，不需要管理员来回切换。</p></div>
+</section>
+
+<form method="post" class="stack-form" id="ai-config-form">
+  <section class="ai-model-grid">
+    {% set reasoning = settings.reasoning %}
+    <article class="panel ai-model-card" data-ai-purpose="reasoning">
+      <div class="ai-model-card-head"><span class="ai-purpose-icon">T</span><div><div class="eyebrow">TEXT · REASONING</div><h2>文本思考模型</h2></div></div>
+      <p class="lead">用于读取 PDF / Markdown 评价方案、理解复杂计分规则并编写规范 JSON。建议选择上下文较长、推理能力较强的思考模型。</p>
+      <div class="stack-form">
+        <label>API 来源<select name="reasoning_provider" data-provider-select>{% for provider in providers %}<option value="{{ provider.key }}" {% if reasoning.provider == provider.key %}selected{% endif %}>{{ provider.label }}</option>{% endfor %}</select><small data-provider-hint>选择模型服务厂商。</small></label>
+        <label>Base URL<input name="reasoning_api_base" data-api-base value="{{ reasoning.api_base }}" placeholder="https://api.example.com/v1"><small>填到 /v1 即可，系统自动拼接 /chat/completions。</small></label>
+        <label>API Key<input name="reasoning_api_key" type="password" autocomplete="new-password" placeholder="{{ '已保存，留空表示不修改' if has_keys.reasoning else '请输入 API Key' }}"></label>
+        <label>思考模型 ID<input name="reasoning_model_name" data-model-name value="{{ reasoning.model_name }}" placeholder="例如厂商提供的 reasoning / thinking 模型"><small>应能稳定输出长文本和结构化 JSON，不要求具备读图能力。</small></label>
+        <label class="check-row"><input type="checkbox" name="reasoning_enabled" {% if reasoning.enabled %}checked{% endif %}>启用文本思考模型</label>
+      </div>
+    </article>
+
+    {% set vision = settings.vision %}
+    <article class="panel ai-model-card vision" data-ai-purpose="vision">
+      <div class="ai-model-card-head"><span class="ai-purpose-icon">V</span><div><div class="eyebrow">VISION · FAST</div><h2>视觉识别模型</h2></div></div>
+      <p class="lead">用于教师上传证书后的字段识别和自动回填。必须选择支持图像理解的多模态模型，优先考虑速度快、成本低的轻量模型。</p>
+      <div class="stack-form">
+        <label>API 来源<select name="vision_provider" data-provider-select>{% for provider in providers %}<option value="{{ provider.key }}" {% if vision.provider == provider.key %}selected{% endif %}>{{ provider.label }}</option>{% endfor %}</select><small data-provider-hint>选择支持视觉模型的服务厂商。</small></label>
+        <label>Base URL<input name="vision_api_base" data-api-base value="{{ vision.api_base }}" placeholder="https://api.example.com/v1"><small>可以与文本模型使用同一厂商，也可以完全独立。</small></label>
+        <label>API Key<input name="vision_api_key" type="password" autocomplete="new-password" placeholder="{{ '已保存，留空表示不修改' if has_keys.vision else '请输入 API Key' }}"></label>
+        <label>视觉模型 ID<input name="vision_model_name" data-model-name value="{{ vision.model_name }}" placeholder="必须填写支持图片输入的模型 ID"><small>普通纯文本模型无法识别证书图片，请确认模型支持 image_url / 图像理解。</small></label>
+        <label class="check-row"><input type="checkbox" name="vision_enabled" {% if vision.enabled %}checked{% endif %}>启用证书与材料识别</label>
+      </div>
+    </article>
+  </section>
+  <button class="primary-button ai-save-button" type="submit">保存两类模型配置</button>
+</form>
+
+<section class="panel ai-test-panel">
+  <div><div class="eyebrow">CONNECTION TEST</div><h2>分别测试连接</h2><p class="lead">保存后可单独测试每个模型。测试只发送最小文本请求，不会上传学校材料。</p></div>
+  <div class="button-row"><button class="secondary-button" type="button" data-test-purpose="reasoning">测试文本思考模型</button><button class="secondary-button" type="button" data-test-purpose="vision">测试视觉识别模型</button></div>
+  <div id="ai-test-result" class="validation-result" hidden></div>
+  <div class="security-note"><strong>安全说明</strong><p>两套 Key 都只保存在本机 SQLite，不出现在前端源码、日志、导出文件和更新包中。</p></div>
 </section>
 {% endblock %}
 {% block scripts %}<script>
 const providerRows={{ providers|tojson }};
 const presets=Object.fromEntries(providerRows.map(row=>[row.key,row]));
-function applyProvider(key){const p=presets[key];if(!p)return;if(p.base_url)document.getElementById('ai-base').value=p.base_url;if(p.model)document.getElementById('ai-model').value=p.model;document.getElementById('provider-hint').textContent=p.needs_key?'需要该厂商的 API Key。':'Ollama 为本机服务，可不填写 API Key。';}
-document.getElementById('ai-provider').addEventListener('change',e=>applyProvider(e.target.value));
-document.getElementById('test-ai').addEventListener('click',async()=>{const box=document.getElementById('ai-test-result');box.hidden=false;box.textContent='正在连接…';try{const r=await fetch({{ url_for('main.test_ai_api')|tojson }},{method:'POST'});const d=await r.json();box.className='validation-result '+(d.ok?'valid':'invalid');box.textContent=d.message;}catch(error){box.className='validation-result invalid';box.textContent='请求失败，请检查网络后重试。';}});
+document.querySelectorAll('[data-ai-purpose]').forEach(card=>{
+  const purpose=card.dataset.aiPurpose,select=card.querySelector('[data-provider-select]'),base=card.querySelector('[data-api-base]'),model=card.querySelector('[data-model-name]'),hint=card.querySelector('[data-provider-hint]');
+  const updateHint=()=>{const p=presets[select.value];if(!p)return;hint.textContent=p.needs_key?'该厂商需要 API Key。':'Ollama 为本机服务，可不填写 API Key。';};
+  select.addEventListener('change',()=>{const p=presets[select.value];if(!p)return;if(p.base_url)base.value=p.base_url;const suggested=purpose==='vision'?(p.vision_model||''):p.model;if(suggested)model.value=suggested;updateHint();});
+  updateHint();
+});
+const testResult=document.getElementById('ai-test-result');
+document.querySelectorAll('[data-test-purpose]').forEach(button=>button.addEventListener('click',async()=>{
+  const purpose=button.dataset.testPurpose,label=button.textContent;button.disabled=true;button.textContent='正在连接…';testResult.hidden=false;testResult.className='validation-result';testResult.textContent='正在发送最小请求…';
+  try{const response=await fetch({{ url_for('main.test_ai_api')|tojson }},{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({purpose})});const data=await response.json();testResult.className='validation-result '+(data.ok?'valid':'invalid');testResult.textContent=data.message;}catch(error){testResult.className='validation-result invalid';testResult.textContent='请求失败，请检查网络后重试。';}finally{button.disabled=false;button.textContent=label;}
+}));
 </script>{% endblock %}
