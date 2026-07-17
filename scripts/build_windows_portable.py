@@ -8,8 +8,8 @@ import zipfile
 from pathlib import Path
 
 
-APP_VERSION = '0.3.7'
-PORTABLE_RELEASE = f'{APP_VERSION}-r3'
+APP_VERSION = '0.4.0'
+PORTABLE_RELEASE = APP_VERSION
 PYTHON_VERSION = '3.13.14'
 PYTHON_TAG = '313'
 PYTHON_URL = f'https://www.python.org/ftp/python/{PYTHON_VERSION}/python-{PYTHON_VERSION}-embed-amd64.zip'
