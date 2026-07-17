@@ -125,7 +125,7 @@ def main():
     lan_ip = detect_lan_ipv4()
     access_url = f'http://{lan_ip}:{port}'
     print(f'CampusMetric LAN address: {access_url}', flush=True)
-    print('Keep this window open. Allow Python on private networks if Windows asks.', flush=True)
+    print('Keep this window open. Allow Python to use the local network if the system asks.', flush=True)
     bootstrap = (
         'import runpy, sys; '
         'sys.path.insert(0, sys.argv[1]); '
