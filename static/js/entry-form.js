@@ -23,6 +23,12 @@
   let selected = null;
   let existingAttachment = null;
 
+  const batchPanel = document.getElementById('batch-panel');
+  const singlePanel = form ? form.closest('.dynamic-form-panel') : null;
+  const modeSingleBtn = document.getElementById('mode-single');
+  const modeBatchBtn = document.getElementById('mode-batch');
+  let batchMode = false;
+
   loadIndicators();
 
   async function loadIndicators() {
@@ -55,6 +61,7 @@
     selected = categories.flatMap(category => category.indicators.map(indicator => ({ ...indicator, category_name: category.name }))).find(item => item.id === id);
     if (!selected) return;
     list.querySelectorAll('.picker-button').forEach(node => node.classList.toggle('active', node === button));
+    if (batchMode) { renderBatchIndicator(); return; }
     empty.hidden = true;
     form.hidden = false;
     document.getElementById('selected-category').textContent = selected.category_name;
@@ -302,6 +309,305 @@
       submit.disabled = false;
     }
   });
+
+  // ===== 批量录入（仅管理员，多选教师 → 表格逐行录入 → 暂存/一次性提交；每行仍走原单条 /api/records 数据格式） =====
+  const batchForm = document.getElementById('batch-form');
+  const batchEmpty = document.getElementById('batch-empty');
+  const batchTeacherList = document.getElementById('batch-teacher-list');
+  const batchTable = document.getElementById('batch-table');
+  const batchTableWrap = document.getElementById('batch-table-wrap');
+  const batchActions = document.getElementById('batch-actions');
+  const batchEvidenceNote = document.getElementById('batch-evidence-note');
+  const batchPicker = document.getElementById('batch-picker');
+  const batchDraftHint = document.getElementById('batch-draft-hint');
+  const batchCount = document.getElementById('batch-count');
+
+  if (modeSingleBtn && modeBatchBtn && batchPanel) {
+    modeSingleBtn.addEventListener('click', () => setBatchMode(false));
+    modeBatchBtn.addEventListener('click', () => setBatchMode(true));
+    document.getElementById('batch-teacher-search').addEventListener('input', event => {
+      const keyword = event.target.value.trim();
+      batchTeacherList.querySelectorAll('.batch-teacher-item').forEach(item => {
+        item.hidden = Boolean(keyword) && !item.textContent.includes(keyword);
+      });
+    });
+    document.getElementById('batch-select-all').addEventListener('click', () => {
+      batchTeacherList.querySelectorAll('.batch-teacher-item:not([hidden]) input').forEach(box => { box.checked = true; });
+      renderBatchTable(true);
+    });
+    document.getElementById('batch-clear-all').addEventListener('click', () => {
+      batchTeacherList.querySelectorAll('input:checked').forEach(box => { box.checked = false; });
+      renderBatchTable(true);
+    });
+    batchTeacherList.addEventListener('change', () => renderBatchTable(true));
+    batchTable.addEventListener('input', event => {
+      const row = event.target.closest('tr[data-teacher]');
+      if (row) updateRowPreview(row);
+    });
+    document.getElementById('batch-fill-down').addEventListener('click', fillDownFirstRow);
+    document.getElementById('batch-save-draft').addEventListener('click', () => saveBatchDraft(true));
+    batchForm.addEventListener('submit', submitBatch);
+  }
+
+  function setBatchMode(next) {
+    if (batchMode === next) return;
+    batchMode = next;
+    modeSingleBtn.classList.toggle('active', !next);
+    modeBatchBtn.classList.toggle('active', next);
+    singlePanel.hidden = next;
+    batchPanel.hidden = !next;
+    const activeButton = list.querySelector('.picker-button.active');
+    if (next) {
+      if (selected) renderBatchIndicator();
+    } else if (selected && activeButton) {
+      selectIndicator(selected.id, activeButton);
+    }
+  }
+
+  function renderBatchIndicator() {
+    batchEmpty.hidden = true;
+    batchForm.hidden = false;
+    document.getElementById('batch-category').textContent = selected.category_name;
+    document.getElementById('batch-name').textContent = selected.name;
+    document.getElementById('batch-description').textContent = selected.description || '按当前考评字典规则录入。';
+    batchEvidenceNote.hidden = !selected.requires_evidence;
+    batchPicker.hidden = false;
+    batchDraftHint.textContent = '';
+    const draft = loadBatchDraft();
+    if (draft) {
+      batchTeacherList.querySelectorAll('input[type="checkbox"]').forEach(box => { box.checked = draft.teachers.includes(Number(box.value)); });
+    }
+    renderBatchTable(false, draft ? draft.rows : null);
+    if (draft) {
+      batchDraftHint.textContent = `已恢复 ${draft.saved_at} 的暂存`;
+      showToast('已恢复上次暂存的批量录入内容');
+    }
+  }
+
+  function batchColumnSpecs(item) {
+    const rule = item.scoring_rule || {};
+    const specs = [];
+    switch (item.scoring_type) {
+      case 'manual_score':
+        specs.push({ label: `实际得分（${rule.min_score}—${rule.max_score}）`, html: () => `<input data-input="score" type="number" step="0.1" min="${rule.min_score}" max="${rule.max_score}" required>` });
+        break;
+      case 'fixed_score':
+      case 'fixed_bonus':
+        specs.push({ label: '是否符合条件', html: teacher => {
+          const preset = item.scoring_type === 'fixed_bonus' && item.name.includes('年段长') ? teacher.gradeLeader : true;
+          return `<select data-input="qualified"><option value="true" ${preset ? 'selected' : ''}>符合，计 ${rule.score} 分</option><option value="false" ${preset ? '' : 'selected'}>不符合，计 0 分</option></select>`;
+        } });
+        break;
+      case 'tiered_score':
+        specs.push({ label: '评价档次', html: () => `<select data-input="option" required><option value="">请选择</option>${(rule.options || []).map(row => `<option value="${escapeAttr(row.value)}">${escapeHtml(row.label)} · ${row.score} 分</option>`).join('')}</select>` });
+        break;
+      case 'count_score':
+        if (item.requires_evidence) {
+          specs.push({ label: '本条材料数量', html: () => `<input data-input="count" type="number" value="1" readonly>` });
+          break;
+        }
+      case 'count_deduction':
+        specs.push({ label: '次数', html: () => `<input data-input="count" type="number" min="0" step="1" value="0" required>` });
+        break;
+      case 'range_score':
+        specs.push({ label: '统计数值', html: () => `<input data-input="value" type="number" step="0.1" required placeholder="满意率、平台分数等">` });
+        break;
+      case 'matrix_score': {
+        const levels = unique((rule.scores || []).map(row => ({ value: row.level, label: row.level_label || row.level })));
+        const ranks = unique((rule.scores || []).map(row => ({ value: row.rank, label: row.rank_label || row.rank })));
+        specs.push({ label: '获奖级别', html: () => `<select data-input="level" required><option value="">请选择</option>${options(levels)}</select>` });
+        specs.push({ label: '奖次', html: () => `<select data-input="rank" required><option value="">请选择</option>${options(ranks)}</select>` });
+        break;
+      }
+      case 'tenure_score':
+        specs.push({ label: '任职年限', html: teacher => `<input data-input="years" type="number" min="0" step="1" value="${teacher.tenure}" required>` });
+        break;
+      default:
+        break;
+    }
+    ((item.scoring_rule || {}).extra_fields || []).forEach(field => {
+      const key = escapeAttr(field.key || '');
+      const required = field.required ? 'required' : '';
+      if (field.input_type === 'select') {
+        specs.push({ label: field.label || field.key || '补充字段', html: () => `<select data-input="${key}" ${required}><option value="">请选择</option>${(field.options || []).map(value => `<option value="${escapeAttr(value)}">${escapeHtml(value)}</option>`).join('')}</select>` });
+      } else {
+        const type = ['text', 'date', 'number'].includes(field.input_type) ? field.input_type : 'text';
+        specs.push({ label: field.label || field.key || '补充字段', html: () => `<input data-input="${key}" type="${type}" ${required}>` });
+      }
+    });
+    const tracking = item.secondary_tracking || { enabled: false };
+    if (tracking.enabled) {
+      if (tracking.input_type === 'select') {
+        specs.push({ label: tracking.label || '补充字段', html: () => `<select data-batch-tracking ${tracking.required ? 'required' : ''}><option value="">请选择</option>${(tracking.options || []).map(value => `<option value="${escapeAttr(value)}">${escapeHtml(value)}</option>`).join('')}</select>` });
+      } else {
+        specs.push({ label: tracking.label || '补充字段', html: () => `<input data-batch-tracking ${tracking.required ? 'required' : ''}>` });
+      }
+    }
+    if (item.requires_evidence) {
+      specs.push({ label: '材料图片（1 张）', html: () => `<input data-batch-file type="file" accept="image/jpeg,image/png,image/webp,image/heic,image/heif" required>` });
+    }
+    specs.push({ label: '补充说明', html: () => `<input data-batch-note placeholder="可选">` });
+    return specs;
+  }
+
+  function checkedTeachers() {
+    return [...batchTeacherList.querySelectorAll('input:checked')].map(box => ({
+      id: Number(box.value),
+      name: box.dataset.name,
+      tenure: Number(box.dataset.tenure || 0),
+      gradeLeader: box.dataset.gradeLeader === '1',
+    }));
+  }
+
+  function snapshotRows() {
+    const rows = {};
+    batchTable.querySelectorAll('tr[data-teacher]').forEach(row => { rows[row.dataset.teacher] = collectRowValues(row); });
+    return rows;
+  }
+
+  function collectRowValues(row) {
+    const values = { inputs: {}, tracking: '', note: '' };
+    row.querySelectorAll('[data-input]').forEach(control => { values.inputs[control.dataset.input] = control.value; });
+    const tracking = row.querySelector('[data-batch-tracking]');
+    if (tracking) values.tracking = tracking.value;
+    const note = row.querySelector('[data-batch-note]');
+    if (note) values.note = note.value;
+    return values;
+  }
+
+  function applyRowValues(row, values) {
+    if (!values) return;
+    Object.entries(values.inputs || {}).forEach(([key, value]) => {
+      const control = row.querySelector(`[data-input="${key}"]`);
+      if (control && value !== '' && value !== null && value !== undefined) control.value = String(value);
+    });
+    const tracking = row.querySelector('[data-batch-tracking]');
+    if (tracking && values.tracking) tracking.value = values.tracking;
+    const note = row.querySelector('[data-batch-note]');
+    if (note && values.note) note.value = values.note;
+  }
+
+  function renderBatchTable(preserve, draftRows = null) {
+    if (!selected || batchMode === false) return;
+    const previous = preserve ? snapshotRows() : {};
+    const teachers = checkedTeachers();
+    batchCount.textContent = `已选 ${teachers.length} 人`;
+    batchTableWrap.hidden = !teachers.length;
+    batchActions.hidden = !teachers.length;
+    if (!teachers.length) { batchTable.innerHTML = ''; return; }
+    const specs = batchColumnSpecs(selected);
+    batchTable.innerHTML = `<thead><tr><th>教师</th>${specs.map(spec => `<th>${escapeHtml(spec.label)}</th>`).join('')}<th>预计得分</th><th>状态</th></tr></thead><tbody>${teachers.map(teacher => `
+      <tr data-teacher="${teacher.id}"><td class="batch-name-cell">${escapeHtml(teacher.name)}</td>${specs.map(spec => `<td>${spec.html(teacher)}</td>`).join('')}<td class="batch-score">—</td><td class="batch-status"></td></tr>`).join('')}</tbody>`;
+    batchTable.querySelectorAll('tr[data-teacher]').forEach(row => {
+      applyRowValues(row, (draftRows || previous)[row.dataset.teacher]);
+      updateRowPreview(row);
+    });
+    document.getElementById('batch-submit').textContent = `一次性提交 ${teachers.length} 条`;
+  }
+
+  function rowInputs(row) {
+    const result = {};
+    row.querySelectorAll('[data-input]').forEach(control => {
+      let value = control.value;
+      if (['score', 'count', 'value', 'years'].includes(control.dataset.input)) value = value === '' ? null : Number(value);
+      if (control.dataset.input === 'qualified') value = value === 'true';
+      result[control.dataset.input] = value;
+    });
+    return result;
+  }
+
+  function updateRowPreview(row) {
+    row.querySelector('.batch-score').textContent = `${formatScore(compute(selected, rowInputs(row)))} 分`;
+  }
+
+  function fillDownFirstRow() {
+    const rows = [...batchTable.querySelectorAll('tr[data-teacher]:not([data-done])')];
+    if (rows.length < 2) return;
+    const source = collectRowValues(rows[0]);
+    rows.slice(1).forEach(row => { applyRowValues(row, source); updateRowPreview(row); });
+    showToast('已将首行内容填充到其余行，请逐行核对。');
+  }
+
+  function draftKey() { return `ce-batch-draft:${selected.id}`; }
+
+  function saveBatchDraft(announce) {
+    if (!selected) return;
+    const teachers = checkedTeachers().map(teacher => teacher.id);
+    const stamp = new Date().toLocaleString('zh-CN', { hour12: false });
+    try {
+      localStorage.setItem(draftKey(), JSON.stringify({ teachers, rows: snapshotRows(), saved_at: stamp }));
+      batchDraftHint.textContent = `已暂存 · ${stamp}`;
+      if (announce) showToast(selected.requires_evidence ? '已暂存（图片不会保存，恢复后需重新选择）。' : '已暂存到本浏览器，下次打开该指标的批量录入会自动恢复。');
+    } catch (error) {
+      showToast('暂存失败：浏览器存储不可用', 'danger');
+    }
+  }
+
+  function loadBatchDraft() {
+    try {
+      const raw = localStorage.getItem(draftKey());
+      if (!raw) return null;
+      const draft = JSON.parse(raw);
+      if (!Array.isArray(draft.teachers) || !draft.teachers.length) return null;
+      return draft;
+    } catch (error) { return null; }
+  }
+
+  async function submitBatch(event) {
+    event.preventDefault();
+    const rows = [...batchTable.querySelectorAll('tr[data-teacher]:not([data-done])')];
+    if (!selected || !rows.length) { showToast('没有待提交的行', 'danger'); return; }
+    if (!batchForm.reportValidity()) return;
+    const submit = document.getElementById('batch-submit');
+    submit.disabled = true;
+    let succeeded = 0; let failed = 0;
+    for (const row of rows) {
+      const status = row.querySelector('.batch-status');
+      status.textContent = '提交中…';
+      status.className = 'batch-status';
+      const payload = {
+        indicator_id: selected.id,
+        target_user_id: Number(row.dataset.teacher),
+        inputs: rowInputs(row),
+        secondary_tracking_value: row.querySelector('[data-batch-tracking]')?.value || '',
+        note: row.querySelector('[data-batch-note]')?.value || '',
+      };
+      const fileInput = row.querySelector('[data-batch-file]');
+      try {
+        const response = await fetch(window.appUrl('/api/records'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+        const result = await response.json();
+        if (!response.ok || !result.ok) throw new Error(result.message || '保存失败');
+        row.dataset.done = '1';
+        if (fileInput && fileInput.files.length) {
+          status.textContent = '上传图片中…';
+          const formData = new FormData();
+          formData.append('files', fileInput.files[0]);
+          const uploadResponse = await fetch(window.appUrl(`/api/records/${result.record_id}/attachments`), { method: 'POST', body: formData });
+          const uploadResult = await uploadResponse.json();
+          if (!uploadResponse.ok || !uploadResult.ok) {
+            row.querySelectorAll('input, select').forEach(control => { control.disabled = true; });
+            status.textContent = `⚠ 已计 ${formatScore(result.auto_score)} 分，但图片上传失败：${uploadResult.message || '未知错误'}。请到考评记录中补传。`;
+            status.classList.add('fail');
+            failed += 1;
+            continue;
+          }
+        }
+        row.querySelectorAll('input, select').forEach(control => { control.disabled = true; });
+        status.textContent = `✓ 已计 ${formatScore(result.auto_score)} 分`;
+        status.classList.add('ok');
+        succeeded += 1;
+      } catch (error) {
+        status.textContent = `✗ ${error.message}`;
+        status.classList.add('fail');
+        failed += 1;
+      }
+    }
+    submit.disabled = false;
+    const remaining = batchTable.querySelectorAll('tr[data-teacher]:not([data-done])').length;
+    document.getElementById('batch-submit').textContent = remaining ? `重新提交剩余 ${remaining} 条` : '全部已提交';
+    if (!remaining) { try { localStorage.removeItem(draftKey()); } catch (error) { /* 忽略 */ } batchDraftHint.textContent = ''; }
+    showToast(failed ? `成功 ${succeeded} 条，失败 ${failed} 条，失败行可修改后重新提交。` : `已全部提交，共 ${succeeded} 条。`, failed ? 'danger' : 'success');
+  }
 
   function unique(rows) { return [...new Map(rows.map(row => [row.value, row])).values()]; }
   function options(rows) { return rows.map(row => `<option value="${escapeAttr(row.value)}">${escapeHtml(row.label)}</option>`).join(''); }

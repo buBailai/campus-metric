@@ -2,7 +2,7 @@
 
 # CampusMetric
 
-**字典驱动、移动优先的开源校园量化评价系统。**
+**字典驱动、移动优先的开源校园全域智评系统。**
 
 <p>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-brightgreen" alt="MIT License"></a>

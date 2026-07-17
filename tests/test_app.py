@@ -462,7 +462,7 @@ class RouteTests(unittest.TestCase):
         result_page = self.client.get('/my/results')
         self.assertEqual(result_page.status_code, 200)
         self.assertIn(b'CampusMetric', result_page.data)
-        self.assertIn('校园评价系统'.encode(), result_page.data)
+        self.assertIn('校园全域智评系统'.encode(), result_page.data)
         self.assertIn('待审核'.encode(), result_page.data)
         self.assertIn('编辑待审核填报'.encode(), result_page.data)
 

@@ -201,6 +201,41 @@ label.is-disabled { color: var(--soft); }
 .selected-indicator h2 { margin-bottom: 5px; }
 .selected-indicator p { color: var(--muted); font-size: 12px; }
 .dynamic-fields, #dynamic-entry-form { display: grid; gap: 15px; }
+
+/* 管理员批量录入 */
+.entry-mode-switch { display: inline-flex; padding: 4px; gap: 4px; border: 1px solid var(--line); border-radius: 13px; background: #fafbfb; }
+.mode-tab { min-height: 36px; padding: 7px 16px; border: none; border-radius: 10px; background: transparent; color: var(--muted); font-size: 12px; font-weight: 780; cursor: pointer; transition: .17s ease; }
+.mode-tab.active { color: white; background: var(--ink); box-shadow: 0 6px 14px rgba(18,20,22,.14); }
+#batch-form { display: grid; gap: 16px; }
+.batch-picker-head { display: flex; flex-wrap: wrap; align-items: center; gap: 9px; margin-bottom: 10px; }
+.batch-picker-head strong { font-size: 12.5px; }
+.batch-picker-head input[type="search"] { flex: 1; min-width: 130px; max-width: 220px; min-height: 36px; }
+.secondary-button.compact { min-height: 32px; padding: 5px 11px; font-size: 11px; }
+.batch-count { color: var(--muted); font: 700 11px var(--mono); }
+.batch-teacher-list { display: flex; flex-wrap: wrap; gap: 7px; max-height: 132px; overflow: auto; padding: 2px; }
+.batch-teacher-item { display: inline-flex; align-items: center; gap: 6px; padding: 6px 11px; border: 1px solid var(--line); border-radius: 999px; background: #fafbfb; font-size: 12px; cursor: pointer; transition: .15s ease; }
+.batch-teacher-item:hover { border-color: var(--purple); }
+.batch-teacher-item:has(input:checked) { border-color: var(--purple); background: var(--purple-soft); font-weight: 700; }
+.batch-teacher-item input { width: auto; min-height: 0; margin: 0; accent-color: var(--purple); }
+.batch-table-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 14px; }
+.batch-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.batch-table th { position: sticky; top: 0; padding: 9px 10px; text-align: left; white-space: nowrap; color: var(--soft); font: 800 10px var(--mono); letter-spacing: .07em; background: #fafbfb; border-bottom: 1px solid var(--line); }
+.batch-table td { padding: 7px 8px; border-bottom: 1px solid var(--line); vertical-align: middle; min-width: 108px; }
+.batch-table tr:last-child td { border-bottom: none; }
+.batch-table .batch-name-cell { font-weight: 780; white-space: nowrap; min-width: 0; }
+.batch-table input, .batch-table select { width: 100%; min-height: 34px; padding: 5px 8px; font-size: 12px; }
+.batch-table tr[data-done] { background: #f4faf5; }
+.batch-table tr[data-done] input, .batch-table tr[data-done] select { opacity: .55; }
+.batch-score { font: 800 12px var(--mono); white-space: nowrap; }
+.batch-status { font-size: 11px; white-space: nowrap; min-width: 88px; }
+.batch-status.ok { color: #277d43; font-weight: 780; }
+.batch-status.fail { color: #c2534b; font-weight: 700; white-space: normal; min-width: 130px; }
+.batch-evidence-note { padding: 11px 14px; border: 1px solid #efd9a9; border-radius: 13px; background: #fdf7e8; color: #7a5b13; font-size: 12px; line-height: 1.6; }
+.batch-table td:has([data-batch-file]) { min-width: 200px; }
+.batch-table input[type="file"] { padding: 4px; font-size: 11px; }
+.batch-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.batch-actions .primary-button { margin-left: auto; }
+.batch-draft-hint { color: var(--muted); font-size: 11px; }
 .inline-options { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 .ai-recognition-box { padding: 14px; border: 1px solid #d9cff8; border-radius: 15px; background: linear-gradient(145deg, #faf8ff, var(--purple-soft)); }
 .ai-recognition-box > small { display: block; margin-top: 9px; color: #75699a; font-size: 10px; line-height: 1.6; }

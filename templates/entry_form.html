@@ -3,6 +3,12 @@
 {% block content %}
 <section class="page-heading">
   <div><div class="eyebrow">DICTIONARY-DRIVEN FORM</div><h1>{{ '管理员录入' if mode == 'admin' else (('修改并重新提交' if edit_record_status == 'rejected' else '修改待审核填报') if edit_record_id else '我的填报') }}</h1><p>{{ ('修改完成后会重新进入待审核状态。' if edit_record_status == 'rejected' else '修改后仍保持待审核状态；审核通过后不能再修改。') if edit_record_id else '页面会自动读取字典中当前可录入的指标。' }}</p></div>
+  {% if mode == 'admin' %}
+  <div class="entry-mode-switch" role="tablist">
+    <button type="button" id="mode-single" class="mode-tab active">单条录入</button>
+    <button type="button" id="mode-batch" class="mode-tab">批量录入</button>
+  </div>
+  {% endif %}
 </section>
 
 <section class="entry-layout" data-entry-mode="{{ mode }}" data-edit-record-id="{{ edit_record_id or '' }}">
@@ -35,6 +41,37 @@
       <button class="primary-button" type="submit">{{ '保存并计分' if mode == 'admin' else (('修改并重新提交' if edit_record_status == 'rejected' else '保存修改（仍待审核）') if edit_record_id else '提交审核') }}</button>
     </form>
   </section>
+
+  {% if mode == 'admin' %}
+  <section class="panel dynamic-form-panel" id="batch-panel" hidden>
+    <div id="batch-empty" class="empty-state"><span>←</span><h3>先选择一个考评项目</h3><p>选择后可勾选多名教师，在表格里一次性录入并提交。</p></div>
+    <form id="batch-form" hidden>
+      <div class="selected-indicator"><div class="eyebrow" id="batch-category"></div><h2 id="batch-name"></h2><p id="batch-description"></p></div>
+      <div id="batch-evidence-note" class="batch-evidence-note" hidden>该指标需要材料：表格中每行选择 1 张证书/材料图片，提交时自动逐条上传并压缩。图片不会进入「暂存」，恢复草稿后需重新选择；需要 AI 识别回填请使用单条录入。</div>
+      <div id="batch-picker" class="batch-picker">
+        <div class="batch-picker-head">
+          <strong>选择被考评教师</strong>
+          <input id="batch-teacher-search" type="search" placeholder="搜索姓名">
+          <button type="button" class="secondary-button compact" id="batch-select-all">全选</button>
+          <button type="button" class="secondary-button compact" id="batch-clear-all">清空</button>
+          <span class="batch-count" id="batch-count">已选 0 人</span>
+        </div>
+        <div class="batch-teacher-list" id="batch-teacher-list">
+          {% for teacher in teachers %}
+          <label class="batch-teacher-item"><input type="checkbox" value="{{ teacher.id }}" data-name="{{ teacher.display_name }}" data-tenure="{{ teacher.tenure_years }}" data-grade-leader="{{ '1' if teacher.is_grade_leader else '0' }}">{{ teacher.display_name }}</label>
+          {% endfor %}
+        </div>
+      </div>
+      <div class="batch-table-wrap" id="batch-table-wrap" hidden><table class="batch-table" id="batch-table"></table></div>
+      <div class="batch-actions" id="batch-actions" hidden>
+        <button type="button" class="secondary-button" id="batch-fill-down">↓ 首行值填充全部</button>
+        <button type="button" class="secondary-button" id="batch-save-draft">暂存</button>
+        <span class="batch-draft-hint" id="batch-draft-hint"></span>
+        <button type="submit" class="primary-button" id="batch-submit">一次性提交</button>
+      </div>
+    </form>
+  </section>
+  {% endif %}
 </section>
 {% endblock %}
-{% block scripts %}<script src="{{ url_for('static', filename='js/entry-form.js', v='20260714-pending-edit1') }}"></script>{% endblock %}
+{% block scripts %}<script src="{{ url_for('static', filename='js/entry-form.js', v='20260717-batch2') }}"></script>{% endblock %}
